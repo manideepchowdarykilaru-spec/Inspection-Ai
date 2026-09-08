@@ -1,0 +1,53 @@
+{
+  "name": "lm-inspect-ai",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "description": "LM-Inspect AI — Legal Metrology Packaged Commodity Compliance System",
+  "scripts": {
+    "dev": "concurrently -n api,web -c magenta,cyan \"npm:dev:api\" \"npm:dev:web\"",
+    "dev:api": "tsx watch --tsconfig backend/tsconfig.json backend/src/index.ts",
+    "dev:web": "vite --config frontend/vite.config.ts",
+    "dev:mobile": "concurrently -n api,web -c magenta,cyan \"npm:dev:api\" \"node frontend/scripts/dev-https.mjs\"",
+    "db:setup": "tsx --tsconfig backend/tsconfig.json backend/scripts/db-setup.ts",
+    "db:reset": "tsx --tsconfig backend/tsconfig.json backend/scripts/db-setup.ts --reset",
+    "typecheck": "tsc --noEmit -p frontend/tsconfig.json && tsc --noEmit -p backend/tsconfig.json",
+    "build": "tsc --noEmit -p frontend/tsconfig.json && vite build --config frontend/vite.config.ts",
+    "preview": "vite preview --config frontend/vite.config.ts",
+    "ocr:smoke": "node backend/scripts/make-test-label.mjs && tsx --tsconfig backend/tsconfig.json backend/scripts/ocr-smoke-test.ts",
+    "ocr:bench": "node backend/scripts/make-test-label.mjs && node backend/scripts/make-photo-sim.mjs && node backend/scripts/make-webcam-sim.mjs && node backend/scripts/make-test-variants.mjs && tsx --tsconfig backend/tsconfig.json backend/scripts/ocr-bench.ts"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "jimp": "^1.6.1",
+    "lucide-react": "^0.451.0",
+    "pg": "^8.23.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-hook-form": "^7.53.0",
+    "react-router-dom": "^6.26.2",
+    "recharts": "^2.12.7",
+    "tailwind-merge": "^2.5.2",
+    "tesseract.js": "^7.0.0"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.4.1",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-basic-ssl": "^1.2.0",
+    "@vitejs/plugin-react": "^4.3.2",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^10.0.5",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.13",
+    "tsx": "^4.23.13",
+    "typescript": "^5.6.2",
+    "vite": "^5.4.8"
+  }
+}

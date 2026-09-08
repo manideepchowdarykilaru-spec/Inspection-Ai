@@ -1,0 +1,17 @@
+node_modules
+dist
+dist-ssr
+*.local
+.DS_Store
+.vite
+*.log
+tsconfig.tsbuildinfo
+
+# Local environment
+.env
+
+# Local scratch artefacts
+scratch/
+
+# Tesseract language cache downloaded on first OCR run
+eng.traineddata
