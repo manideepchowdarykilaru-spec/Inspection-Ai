@@ -1,6 +1,10 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import compression from 'compression';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { Inspection, Violation } from '@shared/types';
 import { COMPLIANCE_RULES } from '@shared/data/rules';
 import { caseById } from '@shared/data/seedCorpus';
@@ -23,11 +27,70 @@ import { mergeReadings, type ImageReading } from './ocr/merge';
  * drift out of step.
  */
 
-const PORT = Number(process.env.API_PORT ?? 4000);
+// Hosting platforms (Render, Railway, Fly) hand the port over as PORT.
+const PORT = Number(process.env.PORT ?? process.env.API_PORT ?? 4000);
 
 export const app = express();
 app.use(cors());
+// The bootstrap payload is ~650 KB of JSON and ~50 KB gzipped; on a phone that is
+// the difference between a blank screen and the dashboard.
+app.use(compression());
 app.use(express.json({ limit: '30mb' }));
+
+/**
+ * Bootstrap cache.
+ *
+ * Every write goes through this process, so the working set can be served from
+ * memory and rebuilt only after a mutation. With a hosted database each of the
+ * ten queries behind /api/bootstrap is a network round trip; from cache the
+ * response is immediate regardless of where the database lives.
+ */
+let bootstrapCache: Promise<BootstrapPayload> | null = null;
+
+interface BootstrapPayload {
+  users: Awaited<ReturnType<typeof repo.listUsers>>;
+  products: Awaited<ReturnType<typeof repo.listProducts>>;
+  inspections: Awaited<ReturnType<typeof repo.listInspections>>;
+  evidence: Awaited<ReturnType<typeof repo.listEvidence>>;
+  reports: Awaited<ReturnType<typeof repo.listReports>>;
+  notifications: Awaited<ReturnType<typeof repo.listNotifications>>;
+  rules: Awaited<ReturnType<typeof repo.listRules>>;
+}
+
+async function loadBootstrap(): Promise<BootstrapPayload> {
+  const [users, products, inspections, evidence, reports, notifications, rules] = await Promise.all([
+    repo.listUsers(),
+    repo.listProducts(),
+    repo.listInspections(),
+    repo.listEvidence(),
+    repo.listReports(),
+    repo.listNotifications(),
+    repo.listRules(),
+  ]);
+  return { users, products, inspections, evidence, reports, notifications, rules };
+}
+
+function getBootstrap(): Promise<BootstrapPayload> {
+  if (!bootstrapCache) {
+    bootstrapCache = loadBootstrap().catch((error) => {
+      bootstrapCache = null; // do not cache a failure
+      throw error;
+    });
+  }
+  return bootstrapCache;
+}
+
+// Any mutation invalidates the cache once its response has been written, and
+// the rebuild starts at once so the next reader usually finds it ready.
+app.use('/api', (req, res, next) => {
+  if (req.method !== 'GET') {
+    res.on('finish', () => {
+      bootstrapCache = null;
+      getBootstrap().catch(() => undefined);
+    });
+  }
+  next();
+});
 
 /** Express 5 types route params as string | string[]; every route here takes a single value. */
 const param = (req: express.Request, name: string) => String(req.params[name]);
@@ -53,16 +116,8 @@ app.get('/api/health', asyncRoute(async (_req, res) => {
 
 /** One round trip that hydrates the entire client cache. */
 app.get('/api/bootstrap', asyncRoute(async (_req, res) => {
-  const [users, products, inspections, evidence, reports, notifications, rules] = await Promise.all([
-    repo.listUsers(),
-    repo.listProducts(),
-    repo.listInspections(),
-    repo.listEvidence(),
-    repo.listReports(),
-    repo.listNotifications(),
-    repo.listRules(),
-  ]);
-  res.json({ users, products, inspections, evidence, reports, notifications, rules });
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(await getBootstrap());
 }));
 
 /* ------------------------------------------------------------------ Scan */
@@ -344,12 +399,41 @@ app.delete('/api/notifications/:id', asyncRoute(async (req, res) => {
 /* ------------------------------------------------------------ Demo reset */
 
 app.post('/api/admin/reset', asyncRoute(async (_req, res) => {
+  bootstrapCache = null;
   await truncate();
   const counts = await seed();
   res.json({ ok: true, ...counts });
 }));
 
 /* ------------------------------------------------------------------ Boot */
+
+/* ------------------------------------------------------------- Frontend */
+
+/**
+ * In production the API also serves the built interface, so one host and one
+ * origin carry the whole application. Hashed assets are immutable and cached
+ * for a year; index.html is revalidated on every visit so a new deploy is
+ * picked up immediately.
+ */
+const distDir = fileURLToPath(new URL('../../frontend/dist/', import.meta.url));
+if (existsSync(join(distDir, 'index.html'))) {
+  app.use(
+    express.static(distDir, {
+      index: false,
+      maxAge: '1y',
+      immutable: true,
+      setHeaders(res, filePath) {
+        if (filePath.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache');
+      },
+    }),
+  );
+  app.get('/{*splat}', (req, res, next) => {
+    if (req.path.startsWith('/api/')) return next();
+    res.setHeader('Cache-Control', 'no-cache');
+    res.sendFile(join(distDir, 'index.html'));
+  });
+  console.log('[api] serving frontend from', distDir);
+}
 
 async function start() {
   await assertConnection();
@@ -360,6 +444,9 @@ async function start() {
     const counts = await seed();
     console.log('[api] seeded', counts);
   }
+
+  // Warm the cache so the first visitor is not the one who pays for the queries.
+  getBootstrap().catch((err) => console.warn('[api] bootstrap warm-up failed:', err.message));
 
   app.listen(PORT, () => {
     console.log(`\n  LM-Inspect AI API  →  http://localhost:${PORT}/api/health`);

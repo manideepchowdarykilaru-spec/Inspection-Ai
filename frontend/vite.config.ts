@@ -47,6 +47,8 @@ export default defineConfig({
         manualChunks: {
           charts: ['recharts'],
           vendor: ['react', 'react-dom', 'react-router-dom'],
+          // Icons otherwise split into dozens of 300-byte chunks, one request each.
+          icons: ['lucide-react'],
         },
       },
     },

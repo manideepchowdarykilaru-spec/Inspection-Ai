@@ -19,7 +19,18 @@ export function adminConnectionString() {
   return { adminUrl: url.toString(), database };
 }
 
-export const pool = new Pool({ connectionString: DATABASE_URL, max: 10 });
+/**
+ * A hosted database (Neon, Render, Supabase) sits hundreds of milliseconds away
+ * and each new TLS connection costs seconds, so connections are kept open and
+ * reused rather than dropped after ten idle seconds — the `pg` default.
+ */
+export const pool = new Pool({
+  connectionString: DATABASE_URL,
+  max: 10,
+  idleTimeoutMillis: 10 * 60_000,
+  connectionTimeoutMillis: 20_000,
+  keepAlive: true,
+});
 
 export async function assertConnection() {
   try {

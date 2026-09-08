@@ -1,0 +1,19 @@
+# Render blueprint: one web service runs the API and serves the built frontend.
+# Create the database first (Render Postgres or Neon), then set DATABASE_URL in
+# the service's environment. Pick the same region as the database.
+services:
+  - type: web
+    name: lm-inspect-ai
+    runtime: node
+    plan: starter            # 2 GB RAM: OCR over a 12 MP photograph needs the headroom
+    region: ohio             # match your database region (Neon us-east-2 = Ohio)
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_OPTIONS
+        value: --max-old-space-size=1536
+      - key: DATABASE_URL
+        sync: false          # paste the connection string in the dashboard

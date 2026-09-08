@@ -45,6 +45,7 @@ Open <http://localhost:5173>. The API runs on port 4000 and Vite proxies `/api` 
 | `npm run ocr:smoke` | Render a test label, run OCR over it and print the extraction + score |
 | `npm run ocr:bench` | Build adversarial variants and print the robustness table |
 | `npm run typecheck` | Type-check the frontend and the backend projects |
+| `npm start` | Production server: the API also serves `frontend/dist` on one origin |
 | `npm run build` | Type-check and build the production bundle into `frontend/dist` |
 
 **Camera capture** is available from **New Inspection → Capture with camera** and from **Evidence → Capture**. It opens a live `getUserMedia` preview with a framing guide, multi-shot capture, front/rear switching and per-shot discard. Frames are kept at up to a 2600 px longest edge — OCR needs the pixels — and stored as JPEG evidence; the dialog shows the live sensor resolution and warns below 1280 px. Each shot is measured for sharpness the moment it is taken (variance of the Laplacian) and flagged **blurry** in the strip, so a shaken frame is retaken before it reaches the recogniser. Browsers only expose the camera in a secure context — `localhost` qualifies, a plain-http LAN address does not, which is what `npm run dev:mobile` is for. Permission denied, no device, camera busy and insecure context each get their own message plus a file-upload fallback.
@@ -276,6 +277,27 @@ Steps a production deployment would take from here:
 | Mock `signIn` against a seeded user table | JWT issue/refresh, password hashing, httpOnly refresh cookie |
 | Report rendered client-side (print-to-PDF, Word-compatible HTML) | Server-rendered PDF (WeasyPrint) and DOCX (python-docx) with signed download URLs |
 | Rule catalogue mutable in place | Versioned rules so an inspection can always be re-read against the rules it was evaluated under |
+
+## 7a. Deploying
+
+The API is a long-running Node process that keeps a Tesseract worker warm and accepts multi-megabyte photo uploads, so it needs a host that runs a persistent server — **Render**, Railway or Fly.io — rather than a serverless platform (Vercel and Netlify functions cap request bodies at 4.5–6 MB and time out at 10–60 s, which a multi-image scan exceeds). GitHub Pages, Netlify and Vercel can host the static `frontend/dist` if a split deployment is preferred.
+
+The simplest layout is one Render web service that runs `npm start`: the API serves the built interface itself, so there is one origin, no CORS and no `VITE_API_URL`. `render.yaml` in the repository root is a blueprint for it. Steps:
+
+1. Create a PostgreSQL database (Render Postgres or Neon) and copy its connection string.
+2. Create the web service from the GitHub repository. Build command `npm ci && npm run build`, start command `npm start`, **Starter plan (2 GB)** — OCR over a 12 MP frame does not fit in 512 MB.
+3. Set `DATABASE_URL` in the service environment. **Choose the same region as the database**: every query is a network round trip, and a database on another continent turns a 20 ms query into 500 ms.
+4. The first start applies the schema and seeds the corpus automatically.
+
+### Why it opens quickly on a phone
+
+- **The working set is served from memory.** `/api/bootstrap` is cached in the API process and rebuilt only after a write, so the response is immediate however far away the database is (6 s → 20 ms against a remote database).
+- **Responses are gzipped** — the bootstrap payload is 650 KB of JSON and 49 KB on the wire.
+- **The landing and login screens do not wait for data.** Only `/app` is gated on hydration.
+- **Each workspace screen is its own chunk.** The entry bundle fell from 390 KB to 153 KB; the 430 KB charting library is fetched only when the dashboard or analytics is opened.
+- **Hashed assets are immutable** (cached for a year), `index.html` is revalidated on each visit, and the web font is requested from a `<link>` in the head so it downloads alongside the bundle.
+
+For local development keep `DATABASE_URL` pointed at the local PostgreSQL; developing against a remote database works but every cache rebuild after a save takes several seconds.
 
 ## 8. Target production architecture
 

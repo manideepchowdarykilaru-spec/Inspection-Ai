@@ -1,58 +1,87 @@
+import { lazy, Suspense } from 'react';
+import type { ReactNode } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider } from '@/context/AuthContext';
 import { ToastProvider } from '@/context/ToastContext';
 import { AppLayout } from '@/layouts/AppLayout';
 import Landing from '@/pages/Landing';
 import Login from '@/pages/Login';
-import Dashboard from '@/pages/Dashboard';
-import NewInspection from '@/pages/NewInspection';
-import TextExtraction from '@/pages/TextExtraction';
-import AnalysisWorkspace from '@/pages/AnalysisWorkspace';
-import InspectionDetail from '@/pages/InspectionDetail';
-import InspectionHistory from '@/pages/InspectionHistory';
-import ProductRepository from '@/pages/ProductRepository';
-import ProductDetail from '@/pages/ProductDetail';
-import Violations from '@/pages/Violations';
-import Reports from '@/pages/Reports';
-import ReportDetail from '@/pages/ReportDetail';
-import Analytics from '@/pages/Analytics';
-import EvidenceGallery from '@/pages/EvidenceGallery';
-import Notifications from '@/pages/Notifications';
-import UserManagement from '@/pages/UserManagement';
-import RuleConfiguration from '@/pages/RuleConfiguration';
-import Settings from '@/pages/Settings';
 import { RequireCapability } from '@/components/layout/RequireCapability';
 import { DataGate } from '@/components/layout/DataGate';
+
+/*
+ * The landing and login screens ship in the main bundle so they paint at once.
+ * Every workspace screen is its own chunk, fetched when first visited — the
+ * charting library alone is 430 KB and is only needed by the dashboard and
+ * analytics, so a phone opening a saved inspection never downloads it.
+ */
+const Dashboard = lazy(() => import('@/pages/Dashboard'));
+const NewInspection = lazy(() => import('@/pages/NewInspection'));
+const TextExtraction = lazy(() => import('@/pages/TextExtraction'));
+const AnalysisWorkspace = lazy(() => import('@/pages/AnalysisWorkspace'));
+const InspectionDetail = lazy(() => import('@/pages/InspectionDetail'));
+const InspectionHistory = lazy(() => import('@/pages/InspectionHistory'));
+const ProductRepository = lazy(() => import('@/pages/ProductRepository'));
+const ProductDetail = lazy(() => import('@/pages/ProductDetail'));
+const Violations = lazy(() => import('@/pages/Violations'));
+const Reports = lazy(() => import('@/pages/Reports'));
+const ReportDetail = lazy(() => import('@/pages/ReportDetail'));
+const Analytics = lazy(() => import('@/pages/Analytics'));
+const EvidenceGallery = lazy(() => import('@/pages/EvidenceGallery'));
+const Notifications = lazy(() => import('@/pages/Notifications'));
+const UserManagement = lazy(() => import('@/pages/UserManagement'));
+const RuleConfiguration = lazy(() => import('@/pages/RuleConfiguration'));
+const Settings = lazy(() => import('@/pages/Settings'));
+
+function PageFallback() {
+  return (
+    <div className="flex min-h-[40vh] items-center justify-center" role="status" aria-live="polite">
+      <span className="h-5 w-5 animate-spin rounded-full border-2 border-slate-300 border-t-brand-600" />
+      <span className="sr-only">Loading</span>
+    </div>
+  );
+}
+
+function Screen({ children }: { children: ReactNode }) {
+  return <Suspense fallback={<PageFallback />}>{children}</Suspense>;
+}
 
 export default function App() {
   return (
     <AuthProvider>
       <ToastProvider>
-        <DataGate>
-          <Routes>
+        <Routes>
           <Route path="/" element={<Landing />} />
           <Route path="/login" element={<Login />} />
 
-          <Route path="/app" element={<AppLayout />}>
-            <Route index element={<Dashboard />} />
-            <Route path="new-inspection" element={<NewInspection />} />
-            <Route path="extract" element={<TextExtraction />} />
-            <Route path="analysis" element={<AnalysisWorkspace />} />
-            <Route path="inspections" element={<InspectionHistory />} />
-            <Route path="inspections/:id" element={<InspectionDetail />} />
-            <Route path="products" element={<ProductRepository />} />
-            <Route path="products/:id" element={<ProductDetail />} />
-            <Route path="violations" element={<Violations />} />
-            <Route path="reports" element={<Reports />} />
-            <Route path="reports/:id" element={<ReportDetail />} />
-            <Route path="analytics" element={<Analytics />} />
-            <Route path="evidence" element={<EvidenceGallery />} />
-            <Route path="notifications" element={<Notifications />} />
+          {/* Only the workspace needs the inspection records; the public screens do not wait for them. */}
+          <Route
+            path="/app"
+            element={
+              <DataGate>
+                <AppLayout />
+              </DataGate>
+            }
+          >
+            <Route index element={<Screen><Dashboard /></Screen>} />
+            <Route path="new-inspection" element={<Screen><NewInspection /></Screen>} />
+            <Route path="extract" element={<Screen><TextExtraction /></Screen>} />
+            <Route path="analysis" element={<Screen><AnalysisWorkspace /></Screen>} />
+            <Route path="inspections" element={<Screen><InspectionHistory /></Screen>} />
+            <Route path="inspections/:id" element={<Screen><InspectionDetail /></Screen>} />
+            <Route path="products" element={<Screen><ProductRepository /></Screen>} />
+            <Route path="products/:id" element={<Screen><ProductDetail /></Screen>} />
+            <Route path="violations" element={<Screen><Violations /></Screen>} />
+            <Route path="reports" element={<Screen><Reports /></Screen>} />
+            <Route path="reports/:id" element={<Screen><ReportDetail /></Screen>} />
+            <Route path="analytics" element={<Screen><Analytics /></Screen>} />
+            <Route path="evidence" element={<Screen><EvidenceGallery /></Screen>} />
+            <Route path="notifications" element={<Screen><Notifications /></Screen>} />
             <Route
               path="users"
               element={
                 <RequireCapability capability="users:manage">
-                  <UserManagement />
+                  <Screen><UserManagement /></Screen>
                 </RequireCapability>
               }
             />
@@ -60,16 +89,15 @@ export default function App() {
               path="rules"
               element={
                 <RequireCapability capability="rules:manage">
-                  <RuleConfiguration />
+                  <Screen><RuleConfiguration /></Screen>
                 </RequireCapability>
               }
             />
-            <Route path="settings" element={<Settings />} />
+            <Route path="settings" element={<Screen><Settings /></Screen>} />
           </Route>
 
           <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-        </DataGate>
+        </Routes>
       </ToastProvider>
     </AuthProvider>
   );
