@@ -8,6 +8,7 @@
     "dev": "concurrently -n api,web -c magenta,cyan \"npm:dev:api\" \"npm:dev:web\"",
     "dev:api": "tsx watch --tsconfig backend/tsconfig.json backend/src/index.ts",
     "dev:web": "vite --config frontend/vite.config.ts",
+    "start": "tsx --tsconfig backend/tsconfig.json backend/src/index.ts",
     "dev:mobile": "concurrently -n api,web -c magenta,cyan \"npm:dev:api\" \"node frontend/scripts/dev-https.mjs\"",
     "db:setup": "tsx --tsconfig backend/tsconfig.json backend/scripts/db-setup.ts",
     "db:reset": "tsx --tsconfig backend/tsconfig.json backend/scripts/db-setup.ts --reset",
