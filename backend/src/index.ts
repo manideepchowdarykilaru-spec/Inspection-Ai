@@ -25,7 +25,7 @@ import { mergeReadings, type ImageReading } from './ocr/merge';
 
 const PORT = Number(process.env.API_PORT ?? 4000);
 
-const app = express();
+export const app = express();
 app.use(cors());
 app.use(express.json({ limit: '30mb' }));
 
@@ -366,11 +366,17 @@ async function start() {
     console.log('  Database: PostgreSQL   OCR: Tesseract (tesseract.js)\n');
   });
 
-  // Load the OCR language data up front so the first real scan is not slow.
-  warmUp().catch((err) => console.warn('[api] OCR warm-up failed:', err.message));
+  warmUp().catch((err) =>
+    console.warn('[api] OCR warm-up failed:', err.message)
+  );
 }
 
-start().catch((error) => {
-  console.error(`\n[api] startup failed\n\n${error.message}\n`);
-  process.exit(1);
-});
+// Local development only
+if (!process.env.VERCEL) {
+  start().catch((error) => {
+    console.error(`\n[api] startup failed\n\n${error.message}\n`);
+    process.exit(1);
+  });
+}
+
+export default app;
