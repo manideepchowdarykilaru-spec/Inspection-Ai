@@ -285,7 +285,7 @@ The API is a long-running Node process that keeps a Tesseract worker warm and ac
 The simplest layout is one Render web service that runs `npm start`: the API serves the built interface itself, so there is one origin, no CORS and no `VITE_API_URL`. `render.yaml` in the repository root is a blueprint for it. Steps:
 
 1. Create a PostgreSQL database (Render Postgres or Neon) and copy its connection string.
-2. Create the web service from the GitHub repository. Build command `npm ci && npm run build`, start command `npm start`, **Starter plan (2 GB)** — OCR over a 12 MP frame does not fit in 512 MB.
+2. Create the web service from the GitHub repository. Build command `npm ci --include=dev && npm run build`, start command `npm start`, **Starter plan (2 GB)** — OCR over a 12 MP frame does not fit in 512 MB.
 3. Set `DATABASE_URL` in the service environment. **Choose the same region as the database**: every query is a network round trip, and a database on another continent turns a 20 ms query into 500 ms.
 4. The first start applies the schema and seeds the corpus automatically.
 

@@ -7,7 +7,8 @@ services:
     runtime: node
     plan: starter            # 2 GB RAM: OCR over a 12 MP photograph needs the headroom
     region: ohio             # match your database region (Neon us-east-2 = Ohio)
-    buildCommand: npm ci && npm run build
+    # --include=dev: NODE_ENV=production would otherwise skip the build tooling
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: npm start
     healthCheckPath: /api/health
     envVars:
