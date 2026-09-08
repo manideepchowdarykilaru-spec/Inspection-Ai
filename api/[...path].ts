@@ -1,3 +1,3 @@
-import app from '../backend/src/index';
+import app from '../backend/src/index.ts';
 
 export default app;
