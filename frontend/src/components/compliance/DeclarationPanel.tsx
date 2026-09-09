@@ -57,7 +57,10 @@ export function DeclarationPanel({
                 </p>
                 {d.readability && (
                   <p className="mt-1 font-mono text-2xs text-slate-400">
-                    ~{d.readability.estimatedMm} mm · {d.readability.estimatedFontPt} pt · contrast{' '}
+                    {d.readability.scaleKnown
+                      ? `~${d.readability.estimatedMm} mm · ${d.readability.estimatedFontPt} pt`
+                      : `${d.readability.textHeightPx} px tall · no scale reference`}
+                    {' · contrast '}
                     {d.readability.contrastRatio.toFixed(1)}:1
                   </p>
                 )}

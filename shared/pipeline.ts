@@ -48,8 +48,8 @@ export interface PipelineStage {
 }
 
 export const PIPELINE_STAGES: PipelineStage[] = [
-  { id: 'preprocess', label: 'Image preprocessing', detail: 'Deskew · denoise · adaptive threshold', duration: 620 },
-  { id: 'ocr', label: 'OCR text extraction', detail: 'PP-OCRv4 detection + recognition (en/hi)', duration: 900 },
+  { id: 'preprocess', label: 'Image preprocessing', detail: 'Orientation · colour · perspective · deskew · adaptive threshold', duration: 620 },
+  { id: 'ocr', label: 'OCR text extraction', detail: 'Tesseract LSTM recognition · multi-pass merge', duration: 900 },
   { id: 'detect', label: 'Declaration detection', detail: 'Layout analysis over recognised text blocks', duration: 640 },
   { id: 'classify', label: 'Field classification', detail: 'Entity tagging of mandatory declarations', duration: 620 },
   { id: 'readability', label: 'Readability analysis', detail: 'Print height, contrast and legibility estimation', duration: 560 },

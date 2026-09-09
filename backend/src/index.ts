@@ -2,6 +2,11 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import compression from 'compression';
+import { randomUUID } from 'node:crypto';
+import { DEMO_CREDENTIALS, DEPARTMENT } from '@shared/data/mockData';
+import type { AccessReviewRequest, LoginRequest, LoginResponse, RegisterRequest, User } from '@shared/types';
+import type { AuthedRequest } from './auth';
+import { hashPassword, requireAuth, requireRole, signToken, verifyPassword } from './auth';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,6 +41,8 @@ app.use(cors());
 // the difference between a blank screen and the dashboard.
 app.use(compression());
 app.use(express.json({ limit: '30mb' }));
+// Every /api route except health and /api/auth/* requires a signed token.
+app.use(requireAuth);
 
 /**
  * Bootstrap cache.
@@ -119,6 +126,128 @@ app.get('/api/bootstrap', asyncRoute(async (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.json(await getBootstrap());
 }));
+
+/* ------------------------------------------------------------------ Auth */
+
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const OFFICIAL_ID = /^[A-Za-z0-9][A-Za-z0-9\-\/.]{3,31}$/;
+
+app.post('/api/auth/login', asyncRoute(async (req, res) => {
+  const { identifier, password, remember } = (req.body ?? {}) as Partial<LoginRequest>;
+  if (!identifier || !password) {
+    res.status(400).json({ error: 'Official ID and password are required.' });
+    return;
+  }
+  const user = await repo.findUserForLogin(String(identifier));
+  if (!user || !verifyPassword(String(password), user.passwordHash)) {
+    res.status(401).json({ error: 'Invalid official ID or password.' });
+    return;
+  }
+  if (user.status === 'PENDING') {
+    res.status(403).json({ error: 'Your access request is awaiting approval by the department administrator.' });
+    return;
+  }
+  if (user.status === 'REJECTED') {
+    res.status(403).json({ error: 'Your access request was not approved. Contact the department administrator.' });
+    return;
+  }
+  if (user.status !== 'ACTIVE') {
+    res.status(403).json({ error: 'This account is not active. Contact the department administrator.' });
+    return;
+  }
+  const issuedAt = Date.now();
+  const expiresAt = issuedAt + (remember ? 12 : 4) * 3600_000;
+  const token = signToken({ sub: user.id, role: user.role, iat: issuedAt, exp: expiresAt });
+  await repo.touchLastActive(user.id);
+  const { passwordHash: _omit, ...safe } = user;
+  void _omit;
+  const response: LoginResponse = {
+    user: safe,
+    token,
+    issuedAt: new Date(issuedAt).toISOString(),
+    expiresAt: new Date(expiresAt).toISOString(),
+  };
+  res.json(response);
+}));
+
+/**
+ * Access request. Officers do not self-provision in a department: the account
+ * is created PENDING and an administrator approves it in User Management.
+ */
+app.post('/api/auth/register', asyncRoute(async (req, res) => {
+  const b = (req.body ?? {}) as Partial<RegisterRequest>;
+  const name = String(b.name ?? '').trim();
+  const officialId = String(b.officialId ?? '').trim().toUpperCase();
+  const email = String(b.email ?? '').trim().toLowerCase();
+  const phone = String(b.phone ?? '').trim();
+  const region = String(b.region ?? '').trim();
+  const role = b.role === 'SUPERVISOR' ? 'SUPERVISOR' : b.role === 'INSPECTOR' ? 'INSPECTOR' : null;
+  const password = String(b.password ?? '');
+
+  const problems: string[] = [];
+  if (name.length < 3) problems.push('full name');
+  if (!OFFICIAL_ID.test(officialId)) problems.push('official ID (letters, digits, - or /)');
+  if (!EMAIL.test(email)) problems.push('e-mail address');
+  if (phone.replace(/\D/g, '').length < 10) problems.push('mobile number');
+  if (!region) problems.push('region');
+  if (!role) problems.push('role');
+  if (password.length < 8) problems.push('password (at least 8 characters)');
+  if (problems.length) {
+    res.status(400).json({ error: `Please check: ${problems.join(', ')}.` });
+    return;
+  }
+
+  const conflict = await repo.userConflict(officialId, email);
+  if (conflict) {
+    res.status(409).json({
+      error:
+        conflict === 'officialId'
+          ? 'An account with this official ID already exists. Sign in, or contact the administrator if you cannot.'
+          : 'An account with this e-mail already exists.',
+    });
+    return;
+  }
+
+  const now = new Date().toISOString();
+  const initials = name.split(/\s+/).filter(Boolean).slice(-2).map((p) => p[0].toUpperCase()).join('') || 'LM';
+  const user: User = {
+    id: `usr_${randomUUID().slice(0, 8)}`,
+    officialId,
+    name,
+    email,
+    role: role!,
+    designation:
+      String(b.designation ?? '').trim() ||
+      (role === 'SUPERVISOR' ? 'Assistant Controller of Legal Metrology' : 'Inspector of Legal Metrology'),
+    department: DEPARTMENT,
+    region,
+    phone,
+    avatarInitials: initials,
+    status: 'PENDING',
+    lastActiveAt: now,
+    createdAt: now,
+  };
+  await repo.upsertUser(user);
+  await repo.setPasswordHash(user.id, hashPassword(password));
+  await repo.insertNotification({
+    id: `ntf_${randomUUID().slice(0, 8)}`,
+    title: 'New access request',
+    body: `${name} (${officialId}) has requested ${role === 'SUPERVISOR' ? 'supervisor' : 'inspector'} access for ${region}. Review and approve in User Management.`,
+    priority: 'MEDIUM',
+    category: 'SYSTEM',
+    createdAt: now,
+    read: false,
+    link: '/app/users',
+  });
+  res.status(201).json({ ok: true, status: 'PENDING' });
+}));
+
+/** Seeded demonstration accounts receive their published passwords once. */
+async function ensureDemoPasswords() {
+  for (const credential of DEMO_CREDENTIALS) {
+    await repo.setPasswordHashIfEmpty(credential.officialId, hashPassword(credential.password));
+  }
+}
 
 /* ------------------------------------------------------------------ Scan */
 
@@ -355,7 +484,7 @@ app.patch('/api/reports/:id', asyncRoute(async (req, res) => {
 
 /* ----------------------------------------------------------------- Rules */
 
-app.patch('/api/rules/:id', asyncRoute(async (req, res) => {
+app.patch('/api/rules/:id', requireRole('ADMIN'), asyncRoute(async (req, res) => {
   const rules = await repo.listRules();
   const existing = rules.find((r) => r.id === param(req, 'id'));
   if (!existing) {
@@ -368,12 +497,63 @@ app.patch('/api/rules/:id', asyncRoute(async (req, res) => {
 
 /* ----------------------------------------------------------------- Users */
 
-app.post('/api/users', asyncRoute(async (req, res) => {
+app.post('/api/users', requireRole('ADMIN'), asyncRoute(async (req, res) => {
   await repo.upsertUser(req.body);
   res.status(201).json({ ok: true });
 }));
 
-app.patch('/api/users/:id/status', asyncRoute(async (req, res) => {
+/** Access-request decision by an administrator; the reviewer and time are recorded. */
+app.patch('/api/users/:id/review', requireRole('ADMIN'), asyncRoute(async (req, res) => {
+  const body = (req.body ?? {}) as Partial<AccessReviewRequest>;
+  const id = param(req, 'id');
+  const applicant = await repo.findUserById(id);
+  if (!applicant) {
+    res.status(404).json({ error: 'Account not found.' });
+    return;
+  }
+  if (applicant.status !== 'PENDING' && applicant.status !== 'REJECTED') {
+    res.status(409).json({ error: 'This account is not an open access request.' });
+    return;
+  }
+  if (body.decision !== 'APPROVE' && body.decision !== 'REJECT') {
+    res.status(400).json({ error: 'Decision must be APPROVE or REJECT.' });
+    return;
+  }
+  const note = String(body.note ?? '').trim();
+  if (body.decision === 'REJECT' && note.length < 3) {
+    res.status(400).json({ error: 'Give the applicant a reason for the rejection.' });
+    return;
+  }
+  const role: User['role'] =
+    body.role === 'ADMIN' || body.role === 'SUPERVISOR' || body.role === 'INSPECTOR' ? body.role : applicant.role;
+  const reviewer = await repo.findUserById((req as AuthedRequest).auth!.sub);
+  const reviewedAt = new Date().toISOString();
+  const updated = await repo.reviewUser(id, {
+    status: body.decision === 'APPROVE' ? 'ACTIVE' : 'REJECTED',
+    role,
+    region: String(body.region ?? '').trim() || applicant.region,
+    designation: String(body.designation ?? '').trim() || applicant.designation,
+    reviewedBy: reviewer?.name ?? 'Administrator',
+    reviewedAt,
+    note: note || null,
+  });
+  await repo.insertNotification({
+    id: `ntf_${randomUUID().slice(0, 8)}`,
+    title: body.decision === 'APPROVE' ? 'Access request approved' : 'Access request rejected',
+    body:
+      body.decision === 'APPROVE'
+        ? `${applicant.name} (${applicant.officialId}) can now sign in as ${role.toLowerCase()} for ${updated?.region ?? applicant.region}.`
+        : `${applicant.name} (${applicant.officialId}) was not approved: ${note}`,
+    priority: 'LOW',
+    category: 'SYSTEM',
+    createdAt: reviewedAt,
+    read: false,
+    link: '/app/access-requests',
+  });
+  res.json({ user: updated });
+}));
+
+app.patch('/api/users/:id/status', requireRole('ADMIN'), asyncRoute(async (req, res) => {
   await repo.setUserStatus(param(req, 'id'), req.body.status);
   res.json({ ok: true });
 }));
@@ -398,7 +578,7 @@ app.delete('/api/notifications/:id', asyncRoute(async (req, res) => {
 
 /* ------------------------------------------------------------ Demo reset */
 
-app.post('/api/admin/reset', asyncRoute(async (_req, res) => {
+app.post('/api/admin/reset', requireRole('ADMIN'), asyncRoute(async (_req, res) => {
   bootstrapCache = null;
   await truncate();
   const counts = await seed();
@@ -444,6 +624,8 @@ async function start() {
     const counts = await seed();
     console.log('[api] seeded', counts);
   }
+
+  await ensureDemoPasswords();
 
   // Warm the cache so the first visitor is not the one who pays for the queries.
   getBootstrap().catch((err) => console.warn('[api] bootstrap warm-up failed:', err.message));

@@ -9,7 +9,7 @@ import { Modal, ConfirmDialog } from '@/components/ui/Modal';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { EVIDENCE_TYPE_LABEL } from './UploadZone';
 import { CameraCapture, type CapturedShot } from './CameraCapture';
-import { resolveImage, readFileAsDataUrl } from '@/services/imageService';
+import { resolveImage, prepareUpload } from '@/services/imageService';
 import { addEvidence, removeEvidence } from '@/services/inspectionService';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
@@ -36,21 +36,28 @@ export function EvidenceGrid({
 
   const upload = async (files: FileList | null) => {
     if (!files?.length || !inspectionId) return;
+    let added = 0;
     for (const file of Array.from(files)) {
-      if (!file.type.startsWith('image/')) continue;
-      addEvidence(
-        inspectionId,
-        {
-          name: file.name,
-          dataUrl: await readFileAsDataUrl(file),
-          type: 'ADDITIONAL',
-          description: file.name,
-          size: file.size,
-        },
-        user?.name ?? 'Officer',
-      );
+      if (file.type && !file.type.startsWith('image/')) continue;
+      try {
+        const prepared = await prepareUpload(file);
+        addEvidence(
+          inspectionId,
+          {
+            name: file.name,
+            dataUrl: prepared.dataUrl,
+            type: 'ADDITIONAL',
+            description: file.name,
+            size: prepared.size,
+          },
+          user?.name ?? 'Officer',
+        );
+        added += 1;
+      } catch {
+        toast.error(`Could not read ${file.name}`, 'Use a JPG or PNG photograph; HEIC images are not supported.');
+      }
     }
-    toast.success('Evidence added', 'The item is linked to this inspection with an integrity digest.');
+    if (added) toast.success('Evidence added', 'The item is linked to this inspection with an integrity digest.');
   };
 
   const addShots = (shots: CapturedShot[]) => {

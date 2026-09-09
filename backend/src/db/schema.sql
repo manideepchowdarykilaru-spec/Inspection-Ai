@@ -17,10 +17,24 @@ CREATE TABLE IF NOT EXISTS users (
   region         TEXT NOT NULL,
   phone          TEXT,
   avatar_initials TEXT NOT NULL,
-  status         TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'INACTIVE', 'SUSPENDED')),
+  status         TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'INACTIVE', 'SUSPENDED', 'PENDING', 'REJECTED')),
+  password_hash  TEXT,
+  reviewed_by    TEXT,
+  reviewed_at    TIMESTAMPTZ,
+  review_note    TEXT,
   last_active_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- Databases created before authentication was added: add the password column
+-- and widen the status check to admit access requests awaiting approval.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS reviewed_by TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS review_note TEXT;
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_status_check;
+ALTER TABLE users ADD CONSTRAINT users_status_check
+  CHECK (status IN ('ACTIVE', 'INACTIVE', 'SUSPENDED', 'PENDING', 'REJECTED'));
 
 CREATE TABLE IF NOT EXISTS compliance_rules (
   id              TEXT PRIMARY KEY,

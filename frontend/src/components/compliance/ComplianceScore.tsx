@@ -24,8 +24,11 @@ function useCountUp(target: number, duration = 900) {
       if (progress < 1) frame.current = requestAnimationFrame(tick);
     };
     frame.current = requestAnimationFrame(tick);
+    // Animation frames do not run in a background tab; the number must still land.
+    const settle = window.setTimeout(() => setValue(target), duration + 100);
     return () => {
       if (frame.current) cancelAnimationFrame(frame.current);
+      window.clearTimeout(settle);
     };
   }, [target, duration]);
 

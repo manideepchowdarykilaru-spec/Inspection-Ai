@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useForm } from 'react-hook-form';
 import { Search, ShieldCheck, UserPlus } from 'lucide-react';
 import { usePageChrome } from '@/layouts/AppLayout';
@@ -22,10 +23,12 @@ const ROLE_TONE: Record<UserRole, 'violet' | 'blue' | 'slate'> = {
   INSPECTOR: 'slate',
 };
 
-const STATUS_TONE: Record<UserStatus, 'green' | 'slate' | 'red'> = {
+const STATUS_TONE: Record<UserStatus, 'green' | 'slate' | 'red' | 'amber'> = {
   ACTIVE: 'green',
   INACTIVE: 'slate',
   SUSPENDED: 'red',
+  PENDING: 'amber',
+  REJECTED: 'red',
 };
 
 interface UserForm {
@@ -39,6 +42,7 @@ interface UserForm {
 }
 
 export default function UserManagement() {
+  const navigate = useNavigate();
   const toast = useToast();
   const users = useDatabase(() => listUsers(), []);
   const [search, setSearch] = useState('');
@@ -195,7 +199,11 @@ export default function UserManagement() {
           >
             Edit
           </Button>
-          {u.status === 'ACTIVE' ? (
+          {u.status === 'PENDING' || u.status === 'REJECTED' ? (
+            <Button size="sm" variant="ghost" className="text-amber-800" onClick={() => navigate('/app/access-requests')}>
+              Review request
+            </Button>
+          ) : u.status === 'ACTIVE' ? (
             <Button size="sm" variant="ghost" className="text-red-700" onClick={() => setPendingDeactivate(u)}>
               Deactivate
             </Button>
@@ -223,7 +231,12 @@ export default function UserManagement() {
         <KpiCard label="Total accounts" value={users.length} tone="navy" icon={<ShieldCheck size={17} />} />
         <KpiCard label="Inspectors" value={users.filter((u) => u.role === 'INSPECTOR').length} tone="blue" />
         <KpiCard label="Supervisors" value={users.filter((u) => u.role === 'SUPERVISOR').length} tone="slate" />
-        <KpiCard label="Inactive" value={users.filter((u) => u.status !== 'ACTIVE').length} tone="amber" />
+        <KpiCard
+          label="Pending approval"
+          value={users.filter((u) => u.status === 'PENDING').length}
+          tone="amber"
+          sublabel="access requests awaiting review"
+        />
       </div>
 
       <section className="surface overflow-hidden">

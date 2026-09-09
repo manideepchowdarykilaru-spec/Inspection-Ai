@@ -1,5 +1,6 @@
 import { createWorker, PSM, type Worker } from 'tesseract.js';
 import type { Declaration, DeclarationKey, OcrResult, ReadabilityMetric } from '@shared/types';
+import type { FieldHit } from './extract';
 import { DECLARATION_LABELS, DECLARATION_ORDER, DEFAULT_MIN_HEIGHT_MM } from '@shared/data/declarations';
 import { buildSegments, normaliseBox, type Segment } from './segments';
 import { extractFields } from './extract';
@@ -180,10 +181,85 @@ function textRegion(pass: Pass) {
   };
 }
 
+/** A declaration together with the pass that read it, so its boxes map back through that pass's geometry. */
+interface FieldPick {
+  hit: FieldHit;
+  pass: Pass;
+}
+
 interface Recognition {
+  /** The pass whose read is shown as the preview and used for quality. */
   best: Pass;
+  /** Every pass that ran; declarations and lines are merged across them. */
+  passes: Pass[];
+  fields: Partial<Record<DeclarationKey, FieldPick>>;
   refocused: boolean;
   preprocessing: Awaited<ReturnType<typeof preprocessForOcr>>;
+}
+
+/** Prefers confidence, then completeness (a full address beats a fragment). */
+function betterHit(a: FieldHit, b: FieldHit): boolean {
+  if (Math.abs(a.confidence - b.confidence) > 0.08) return a.confidence > b.confidence;
+  return a.value.length > b.value.length;
+}
+
+/**
+ * Keeps, for every declaration, the best reading from any pass.
+ *
+ * Choosing one whole pass threw away what the others had found: the crop of
+ * the panel reads the small print well but may exclude a line at its edge,
+ * while the full frame has that line but reads the small print worse. The
+ * officer needs both.
+ */
+function mergeFields(passes: Pass[]): Partial<Record<DeclarationKey, FieldPick>> {
+  const merged: Partial<Record<DeclarationKey, FieldPick>> = {};
+  for (const pass of passes) {
+    for (const [key, hit] of Object.entries(pass.fields) as [DeclarationKey, FieldHit][]) {
+      const current = merged[key];
+      if (!current || betterHit(hit, current.hit)) merged[key] = { hit, pass };
+    }
+  }
+  return merged;
+}
+
+function overlapRatio(a: OcrLine['box'], b: OcrLine['box']): number {
+  const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+  const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
+  if (w <= 0 || h <= 0) return 0;
+  return (w * h) / Math.max(1e-9, Math.min(a.w * a.h, b.w * b.h));
+}
+
+/**
+ * The accepted pass's lines, plus lines other passes read in parts of the image
+ * the accepted pass did not read well.
+ *
+ * Where a line from another pass overlaps one already present, the more
+ * confident reading wins: a carton photographed sideways yields garbage where
+ * its upright dot-matrix values are, and the upright pass reads those values
+ * cleanly — so the garbage is replaced rather than protecting its area.
+ */
+function mergeLines(best: Pass, passes: Pass[], source: LoadedImage): { lines: OcrLine[]; extra: OcrLine[] } {
+  const lines = linesOf(best, source);
+  const extra: OcrLine[] = [];
+  for (const pass of passes) {
+    if (pass === best) continue;
+    for (const s of pass.segments) {
+      // Segment confidence is 0..1.
+      if (s.confidence < 0.55 || s.words.length === 0 || !s.text.trim()) continue;
+      const candidate: OcrLine = {
+        text: s.text,
+        confidence: Number(s.confidence.toFixed(2)),
+        box: normaliseBox(toSourceBox(s.bbox, pass.variant.geometry), source.width, source.height),
+      };
+      const clash = lines.filter((l) => overlapRatio(l.box, candidate.box) > 0.3);
+      if (clash.some((l) => l.confidence >= candidate.confidence)) continue;
+      if (extra.some((l) => overlapRatio(l.box, candidate.box) > 0.3)) continue;
+      for (const l of clash) lines.splice(lines.indexOf(l), 1);
+      extra.push(candidate);
+    }
+  }
+  extra.sort((a, b) => a.box.y - b.box.y || a.box.x - b.box.x);
+  return { lines: [...lines, ...extra], extra };
 }
 
 type QuarterTurns = 0 | 1 | 2 | 3;
@@ -228,6 +304,10 @@ async function detectOrientation(
   return best.words >= Math.max(6, upright * 1.5) ? best.turns : 0;
 }
 
+function regionArea(r: { x0: number; y0: number; x1: number; y1: number }) {
+  return Math.max(0, r.x1 - r.x0) * Math.max(0, r.y1 - r.y0);
+}
+
 /** Crop rectangle around a region with a proportional margin, clamped to the frame. */
 function cropAround(region: { x0: number; y0: number; x1: number; y1: number }, source: LoadedImage) {
   const marginX = (region.x1 - region.x0) * 0.06;
@@ -260,7 +340,17 @@ async function recognise(buffer: RgbaSource, source: LoadedImage, mode: 'fields'
     preprocessing.textRegion && worthRefocusing(preprocessing.textRegion, source)
       ? cropAround(preprocessing.textRegion, source)
       : undefined;
+  // The tight ink core is read as well when widening changed the crop
+  // materially: a panel bordered by artwork reads better from the core, a
+  // panel with sparse print at its foot reads better from the widened crop,
+  // and the merge keeps the best of each.
+  const core = preprocessing.textRegionCore;
+  const coreRect =
+    cropRect && core && regionArea(core) < regionArea(preprocessing.textRegion!) * 0.85
+      ? cropAround(core, source)
+      : undefined;
 
+  const upright = preprocessing;
   const quarterTurns = await detectOrientation(worker, buffer, cropRect);
   if (quarterTurns) preprocessing = await preprocessForOcr(buffer, { quarterTurns });
   let refocused = false;
@@ -274,21 +364,39 @@ async function recognise(buffer: RgbaSource, source: LoadedImage, mode: 'fields'
   if (cropRect) {
     cropped = await preprocessForOcr(buffer, { crop: cropRect, quarterTurns });
   }
+  const croppedCore = coreRect ? await preprocessForOcr(buffer, { crop: coreRect, quarterTurns }) : null;
+
+  // Every pass is kept: the final declarations are merged across all of them.
+  const passes: Pass[] = [];
+  const run = async (variant: PreprocessVariant, psm: PSM) => {
+    const pass = await runPass(worker, variant, psm);
+    passes.push(pass);
+    return pass;
+  };
+  const merged = () => Object.keys(mergeFields(passes)).length;
 
   let best: Pass | null = null;
-  // The crop is read first: when it wins it is also the common case, and the
-  // full frame then only needs to be read if the crop was weak.
+  // The crop is read first: when it wins it is also the common case.
   if (cropped) {
     for (const variant of cropped.variants) {
-      best = better(best, await runPass(worker, variant, PSM.AUTO), mode);
+      best = better(best, await run(variant, PSM.AUTO), mode);
     }
     refocused = true;
     usedPreprocessing = cropped;
   }
+  if (croppedCore) {
+    for (const variant of croppedCore.variants) {
+      const pass = await run(variant, PSM.AUTO);
+      if (better(best, pass, mode) === pass) {
+        best = pass;
+        usedPreprocessing = croppedCore;
+      }
+    }
+  }
   const cropStrong = best && (mode === 'fields' ? Object.keys(best.fields).length >= 8 : best.confidentWords >= 25);
   if (!cropStrong) {
     for (const variant of preprocessing.variants) {
-      const pass = await runPass(worker, variant, PSM.AUTO);
+      const pass = await run(variant, PSM.AUTO);
       const next = better(best, pass, mode);
       if (next === pass) {
         best = pass;
@@ -296,6 +404,24 @@ async function recognise(buffer: RgbaSource, source: LoadedImage, mode: 'fields'
         usedPreprocessing = preprocessing;
       }
     }
+  } else if (cropped) {
+    // The crop won on the panel, but the frame around it may still carry a
+    // declaration the crop excluded. Read the whole frame once, with the
+    // variant that worked on the crop, and let the merge keep what it adds.
+    const same = preprocessing.variants.find((v) => v.name === best!.variant.name) ?? preprocessing.variants[0];
+    await run(same, PSM.AUTO);
+  }
+
+  // Mixed orientations. On many cartons the printed captions run one way and
+  // the dot-matrix MRP, batch number and dates another, so a photograph that
+  // was turned to read the body text has just made those values sideways. The
+  // untouched orientation is read once more — the caption-free fallbacks pick a
+  // price and dates out of it — and the merge keeps the best of both.
+  if (quarterTurns !== 0) {
+    const uprightCrop = cropRect ? await preprocessForOcr(buffer, { crop: cropRect }) : upright;
+    const variant = uprightCrop.variants.find((v) => v.name === 'normalised') ?? uprightCrop.variants[0];
+    await run(variant, PSM.SPARSE_TEXT);
+    await run(variant, PSM.AUTO);
   }
 
   // Stage 2: the recogniser's own confident words may still outline a tighter
@@ -306,7 +432,7 @@ async function recognise(buffer: RgbaSource, source: LoadedImage, mode: 'fields'
       const recropped = await preprocessForOcr(buffer, { crop: cropAround(region, source), quarterTurns });
       let bestCropped: Pass | null = null;
       for (const variant of recropped.variants) {
-        bestCropped = better(bestCropped, await runPass(worker, variant, PSM.AUTO), mode);
+        bestCropped = better(bestCropped, await run(variant, PSM.AUTO), mode);
       }
       if (bestCropped && passScore(bestCropped, mode) > passScore(best!, mode)) {
         best = bestCropped;
@@ -316,16 +442,16 @@ async function recognise(buffer: RgbaSource, source: LoadedImage, mode: 'fields'
     }
   }
 
-  // Thin read → try the sparse-text segmenter on the accepted variant.
-  const fieldsFound = Object.keys(best!.fields).length;
-  if ((mode === 'fields' && fieldsFound < 6) || (mode === 'text' && best!.confidentWords < 12)) {
-    best = better(best, await runPass(worker, best!.variant, PSM.SPARSE_TEXT), mode);
-    if (Object.keys(best!.fields).length < 4) {
-      best = better(best, await runPass(worker, best!.variant, PSM.SINGLE_BLOCK), mode);
+  // Still missing declarations → the sparse-text segmenter finds isolated lines
+  // that automatic layout analysis folds into blocks or drops.
+  if ((mode === 'fields' && merged() < 10) || (mode === 'text' && best!.confidentWords < 12)) {
+    best = better(best, await run(best!.variant, PSM.SPARSE_TEXT), mode);
+    if (merged() < 4) {
+      best = better(best, await run(best!.variant, PSM.SINGLE_BLOCK), mode);
     }
   }
 
-  return { best: best!, refocused, preprocessing: usedPreprocessing };
+  return { best: best!, passes, fields: mergeFields(passes), refocused, preprocessing: usedPreprocessing };
 }
 
 /* --------------------------------------------------------------- Quality */
@@ -446,15 +572,14 @@ export async function recognisePackage(request: OcrRequest): Promise<OcrResponse
   const source = await loadImage(pixels);
   const rec = await recognise(pixels, source, 'fields');
   const { best } = rec;
-  const g = best.variant.geometry;
 
   const mmPerPx =
     request.panelWidthMm && request.panelWidthMm > 0 ? request.panelWidthMm / source.width : null;
   const minMm = request.minHeightMm ?? DEFAULT_MIN_HEIGHT_MM;
 
   const declarations: Declaration[] = DECLARATION_ORDER.map((key: DeclarationKey) => {
-    const hit = best.fields[key];
-    if (!hit) {
+    const pick = rec.fields[key];
+    if (!pick) {
       return {
         key,
         label: DECLARATION_LABELS[key],
@@ -462,6 +587,8 @@ export async function recognisePackage(request: OcrRequest): Promise<OcrResponse
         confidence: Number((1 - best.meanConfidence).toFixed(2)),
       };
     }
+    const { hit, pass } = pick;
+    const g = pass.variant.geometry;
 
     const recogniserBox = {
       x0: Math.min(...hit.segments.map((s) => s.bbox.x0)),
@@ -485,19 +612,22 @@ export async function recognisePackage(request: OcrRequest): Promise<OcrResponse
         box: normaliseBox(sourceBox, source.width, source.height),
         label: DECLARATION_LABELS[key],
       },
-      readability: buildReadability(hit.segments, best, hit.confidence, contrastRatio, mmPerPx, minMm),
+      readability: buildReadability(hit.segments, pass, hit.confidence, contrastRatio, mmPerPx, minMm),
     };
   });
 
   const detected = declarations.filter((d) => d.detectedValue);
-  const lines = linesOf(best, source);
+  const { lines, extra } = mergeLines(best, rec.passes, source);
+  const rawText = [best.result.data.text.replace(/\n{3,}/g, '\n\n').trim(), ...extra.map((l) => l.text)]
+    .filter(Boolean)
+    .join('\n');
 
   return {
     ocr: {
       imageId: request.imageId,
       engine: ENGINE,
       processingMs: Date.now() - started,
-      rawText: best.result.data.text.replace(/\n{3,}/g, '\n\n').trim(),
+      rawText,
       tokens: lines.map((l) => ({ text: l.text, confidence: l.confidence, box: l.box })),
       averageConfidence: Number(
         (detected.reduce((s, d) => s + d.confidence, 0) / Math.max(detected.length, 1)).toFixed(3),
@@ -519,11 +649,11 @@ export async function extractText(buffer: Buffer): Promise<TextExtraction> {
   const pixels = await decodeSource(buffer);
   const source = await loadImage(pixels);
   const rec = await recognise(pixels, source, 'text');
-  const lines = linesOf(rec.best, source);
+  const { lines } = mergeLines(rec.best, rec.passes, source);
   return {
     rawText: lines.map((l) => l.text).join('\n'),
     lines,
-    quality: assessQuality(rec.best, Object.keys(rec.best.fields).length, rec.refocused),
+    quality: assessQuality(rec.best, Object.keys(rec.fields).length, rec.refocused),
     preprocessing: summarisePreprocessing(rec),
     processingMs: Date.now() - started,
     imageWidth: source.width,

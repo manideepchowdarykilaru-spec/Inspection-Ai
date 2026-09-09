@@ -1,14 +1,14 @@
-import type { User, UserRole } from '@shared/types';
-import { DEMO_CREDENTIALS, USERS } from '@shared/data/mockData';
-import { delay } from '@/lib/utils';
+import type { AccessReviewRequest, RegisterRequest, User, UserRole } from '@shared/types';
 import { getDb, mutate } from './storage';
 import * as api from './api';
 
 /**
- * Authentication service (mock).
+ * Authentication service.
  *
- * The real implementation exchanges credentials for a short-lived JWT and keeps
- * the refresh token in an httpOnly cookie; the shape of `signIn` stays the same.
+ * Credentials are verified by the API against salted password hashes in
+ * PostgreSQL; the signed token it returns accompanies every subsequent call.
+ * A production deployment would exchange a department single sign-on assertion
+ * here instead — the shape of `signIn` stays the same.
  */
 
 const SESSION_KEY = 'lm-inspect.session';
@@ -29,36 +29,32 @@ export interface Credentials {
 export class AuthError extends Error {}
 
 export async function signIn({ officialId, password, remember }: Credentials): Promise<Session> {
-  await delay(650);
-  const id = officialId.trim().toLowerCase();
-  const credential = DEMO_CREDENTIALS.find((c) => {
-    const account = USERS.find((u) => u.officialId === c.officialId);
-    const identifierMatches =
-      c.officialId.toLowerCase() === id || account?.email.toLowerCase() === id;
-    return identifierMatches && c.password === password;
-  });
-
-  if (!credential) {
-    throw new AuthError('Invalid official ID or password. Use the demo credentials shown below.');
+  let response;
+  try {
+    response = await api.login({ identifier: officialId.trim(), password, remember });
+  } catch (error) {
+    if (error instanceof api.ApiError) throw new AuthError(error.message);
+    throw new AuthError('Cannot reach the server. Check your connection and try again.');
   }
 
-  const user = USERS.find((u) => u.officialId === credential.officialId)!;
-  if (user.status !== 'ACTIVE') {
-    throw new AuthError('This account is not active. Contact the department administrator.');
-  }
-
-  const issuedAt = new Date();
-  const expiresAt = new Date(issuedAt.getTime() + (remember ? 12 : 4) * 3600_000);
   const session: Session = {
-    user,
-    issuedAt: issuedAt.toISOString(),
-    expiresAt: expiresAt.toISOString(),
-    token: `mock.${btoa(user.officialId)}.${issuedAt.getTime()}`,
+    user: response.user,
+    issuedAt: response.issuedAt,
+    expiresAt: response.expiresAt,
+    token: response.token,
   };
-
+  api.setAuthToken(session.token);
   sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
   if (remember) localStorage.setItem(SESSION_KEY, JSON.stringify(session));
   return session;
+}
+
+/** Access request for a new officer; the account stays pending until an administrator approves it. */
+export function requestAccess(body: RegisterRequest) {
+  return api.registerOfficer(body).catch((error: unknown) => {
+    if (error instanceof api.ApiError) throw new AuthError(error.message);
+    throw new AuthError('Cannot reach the server. Check your connection and try again.');
+  });
 }
 
 export function restoreSession(): Session | null {
@@ -70,6 +66,7 @@ export function restoreSession(): Session | null {
       signOut();
       return null;
     }
+    api.setAuthToken(session.token);
     return session;
   } catch {
     return null;
@@ -77,6 +74,7 @@ export function restoreSession(): Session | null {
 }
 
 export function signOut() {
+  api.setAuthToken(null);
   sessionStorage.removeItem(SESSION_KEY);
   localStorage.removeItem(SESSION_KEY);
 }
@@ -134,6 +132,39 @@ export function upsertUser(user: User) {
       else draft.users.unshift(user);
     },
     () => api.saveUser(user),
+  );
+}
+
+/** Open access requests, newest first. */
+export function pendingAccessRequests() {
+  return getDb()
+    .users.filter((u) => u.status === 'PENDING')
+    .sort((a, b) => +new Date(b.createdAt) - +new Date(a.createdAt));
+}
+
+export function pendingAccessCount() {
+  return getDb().users.filter((u) => u.status === 'PENDING').length;
+}
+
+/**
+ * Decides an access request. The cache is updated at once so the queue moves
+ * immediately; the API records the decision with the reviewer and time, and a
+ * failed write re-hydrates from the server.
+ */
+export function reviewAccess(userId: string, review: AccessReviewRequest, reviewerName: string) {
+  mutate(
+    (draft) => {
+      const user = draft.users.find((u) => u.id === userId);
+      if (!user) return;
+      user.status = review.decision === 'APPROVE' ? 'ACTIVE' : 'REJECTED';
+      if (review.role) user.role = review.role;
+      if (review.region) user.region = review.region;
+      if (review.designation) user.designation = review.designation;
+      user.reviewedBy = reviewerName;
+      user.reviewedAt = new Date().toISOString();
+      user.reviewNote = review.note?.trim() || undefined;
+    },
+    () => api.reviewAccessRequest(userId, review),
   );
 }
 

@@ -10,6 +10,8 @@
  *   combined    small + rotated + shadow together
  */
 import { Jimp } from 'jimp';
+import { loadFont } from 'jimp';
+import { SANS_32_WHITE } from 'jimp/fonts';
 import { writeFileSync } from 'node:fs';
 
 const here = new URL('.', import.meta.url);
@@ -169,4 +171,52 @@ function warpToQuad(label, frameW, frameH, quad, bg) {
   bordered.composite(label, 30, 30);
   const quad = [[300, 220], [1150, 300], [1090, 1400], [220, 1280]];
   await save('perspective-coloured.jpg', warpToQuad(bordered, 1400, 1600, quad, 0x6b6f75ff).blur(1), 80);
+}
+
+// ---------------------------------------------------------------- edge-text
+// A panel where a textured hero image holds most of the ink, so a crop taken
+// from ink mass alone trims the sparse print at the foot of the label.
+{
+  const frame = new Jimp({ width: 3000, height: 4000, color: 0xe9e4dcff });
+  frame.composite(src.clone().resize({ h: 1500 }), 300, 200);
+  const bx = 350, by = 1900, bw = 2300, bh = 1700;
+  const d = frame.bitmap.data, W = frame.bitmap.width;
+  let seed = 7;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+  for (let y = by; y < by + bh; y++) for (let x = bx; x < bx + bw; x++) {
+    const i = (y * W + x) * 4;
+    const base = 60 + 120 * Math.abs(Math.sin(x / 37) * Math.cos(y / 53));
+    const v = Math.max(0, Math.min(255, base + (rnd() - 0.5) * 160));
+    d[i] = v * 0.9; d[i + 1] = v * 0.8; d[i + 2] = v; d[i + 3] = 255;
+  }
+  await save('edge-text.jpg', frame.blur(1), 80);
+}
+
+// ---------------------------------------------------------- mixed-orientation
+// The Dabur carton: body text sideways, cream on red, while the dot-matrix
+// price, batch and dates are printed upright in the frame.
+{
+  const label = src.clone();
+  const { data } = label.bitmap;
+  for (let i = 0; i < data.length; i += 4) {
+    const ink = data[i] < 128;
+    if (ink) { data[i] = 250; data[i + 1] = 244; data[i + 2] = 232; }
+    else     { data[i] = 188; data[i + 1] = 28;  data[i + 2] = 44;  }
+  }
+  const sideways = label.rotate(90);
+  const frame = new Jimp({ width: 2000, height: 1500, color: 0x8a8f94ff });
+  for (const [x, y, w, h, c] of [[60, 80, 500, 300, 0x5a5f66ff], [1500, 900, 420, 500, 0x33363aff]]) {
+    frame.composite(new Jimp({ width: w, height: h, color: c }), x, y);
+  }
+  const scaled = sideways.resize({ w: Math.round(2000 * 0.62) });
+  const lx = Math.round((2000 - scaled.bitmap.width) / 2);
+  const ly = Math.round((1500 - scaled.bitmap.height) / 2);
+  frame.composite(scaled, lx, ly);
+  // Upright dot-matrix style block over the lower-right of the panel.
+  const block = new Jimp({ width: 420, height: 230, color: 0xbc1c2cff });
+  const lines = ['Rs. 220.00', 'Rs. 0.73 per g', 'RU3743 L8B', '07/2026', '06/2028'];
+  const font = await loadFont(SANS_32_WHITE);
+  lines.forEach((text, i) => block.print({ font, x: 16, y: 10 + i * 42, text }));
+  frame.composite(block, lx + scaled.bitmap.width - 460, ly + scaled.bitmap.height - 260);
+  await save('mixed-orientation.jpg', frame.blur(1), 80);
 }

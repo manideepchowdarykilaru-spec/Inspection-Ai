@@ -43,7 +43,39 @@ export const toUser = (r: Row): User => ({
   status: r.status,
   lastActiveAt: iso(r.last_active_at),
   createdAt: iso(r.created_at),
+  reviewedBy: r.reviewed_by ?? undefined,
+  reviewedAt: isoOrUndefined(r.reviewed_at),
+  reviewNote: r.review_note ?? undefined,
 });
+
+export async function findUserById(id: string): Promise<User | null> {
+  const { rows } = await pool.query('SELECT * FROM users WHERE id = $1', [id]);
+  return rows[0] ? toUser(rows[0]) : null;
+}
+
+/** Records an access-request decision: status, any corrections, and who decided when. */
+export async function reviewUser(
+  id: string,
+  review: {
+    status: User['status'];
+    role: User['role'];
+    region: string;
+    designation: string;
+    reviewedBy: string;
+    reviewedAt: string;
+    note: string | null;
+  },
+): Promise<User | null> {
+  const { rows } = await pool.query(
+    `UPDATE users
+        SET status = $2, role = $3, region = $4, designation = $5,
+            reviewed_by = $6, reviewed_at = $7, review_note = $8
+      WHERE id = $1
+      RETURNING *`,
+    [id, review.status, review.role, review.region, review.designation, review.reviewedBy, review.reviewedAt, review.note],
+  );
+  return rows[0] ? toUser(rows[0]) : null;
+}
 
 export async function listUsers(): Promise<User[]> {
   const { rows } = await pool.query('SELECT * FROM users ORDER BY created_at');
@@ -66,6 +98,39 @@ export async function upsertUser(user: User, client: PoolClient | typeof pool = 
       user.lastActiveAt, user.createdAt,
     ],
   );
+}
+
+/** The user row plus its password hash — only for the login route. */
+export async function findUserForLogin(identifier: string): Promise<(User & { passwordHash: string | null }) | null> {
+  const { rows } = await pool.query(
+    'SELECT * FROM users WHERE lower(official_id) = lower($1) OR lower(email) = lower($1) LIMIT 1',
+    [identifier.trim()],
+  );
+  if (!rows[0]) return null;
+  return { ...toUser(rows[0]), passwordHash: rows[0].password_hash ?? null };
+}
+
+/** Which unique field an access request collides with, if any. */
+export async function userConflict(officialId: string, email: string): Promise<'officialId' | 'email' | null> {
+  const { rows } = await pool.query(
+    'SELECT official_id, email FROM users WHERE lower(official_id) = lower($1) OR lower(email) = lower($2)',
+    [officialId.trim(), email.trim()],
+  );
+  if (!rows.length) return null;
+  return rows.some((r) => r.official_id.toLowerCase() === officialId.trim().toLowerCase()) ? 'officialId' : 'email';
+}
+
+export async function setPasswordHash(id: string, hash: string) {
+  await pool.query('UPDATE users SET password_hash = $2 WHERE id = $1', [id, hash]);
+}
+
+/** Gives a seeded account its password without overwriting one already set. */
+export async function setPasswordHashIfEmpty(officialId: string, hash: string) {
+  await pool.query('UPDATE users SET password_hash = $2 WHERE official_id = $1 AND password_hash IS NULL', [officialId, hash]);
+}
+
+export async function touchLastActive(id: string) {
+  await pool.query('UPDATE users SET last_active_at = now() WHERE id = $1', [id]);
 }
 
 export async function setUserStatus(id: string, status: User['status']) {

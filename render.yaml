@@ -18,3 +18,5 @@ services:
         value: --max-old-space-size=1536
       - key: DATABASE_URL
         sync: false          # paste the connection string in the dashboard
+      - key: AUTH_SECRET
+        generateValue: true  # Render generates a random signing secret

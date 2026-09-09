@@ -48,7 +48,7 @@ Open <http://localhost:5173>. The API runs on port 4000 and Vite proxies `/api` 
 | `npm start` | Production server: the API also serves `frontend/dist` on one origin |
 | `npm run build` | Type-check and build the production bundle into `frontend/dist` |
 
-**Camera capture** is available from **New Inspection → Capture with camera** and from **Evidence → Capture**. It opens a live `getUserMedia` preview with a framing guide, multi-shot capture, front/rear switching and per-shot discard. Frames are kept at up to a 2600 px longest edge — OCR needs the pixels — and stored as JPEG evidence; the dialog shows the live sensor resolution and warns below 1280 px. Each shot is measured for sharpness the moment it is taken (variance of the Laplacian) and flagged **blurry** in the strip, so a shaken frame is retaken before it reaches the recogniser. Browsers only expose the camera in a secure context — `localhost` qualifies, a plain-http LAN address does not, which is what `npm run dev:mobile` is for. Permission denied, no device, camera busy and insecure context each get their own message plus a file-upload fallback.
+**Camera capture** is available from **New Inspection → Capture with camera** and from **Evidence → Capture**. It opens a live `getUserMedia` preview with a framing guide, multi-shot capture, front/rear switching and per-shot discard. Frames are kept at up to a 2600 px longest edge — OCR needs the pixels — and stored as JPEG evidence; the dialog shows the live sensor resolution and warns below 1280 px. Each shot is measured for sharpness the moment it is taken (variance of the Laplacian) and flagged **blurry** in the strip, so a shaken frame is retaken before it reaches the recogniser. Uploaded files go through the same normalisation: they are decoded on the device (honouring EXIF orientation), downscaled to a 2600 px longest edge and re-encoded as JPEG, so a 5 MB phone photograph becomes a ~700 KB upload and the server never decodes a 12 MP frame. A file the browser cannot decode — an iPhone HEIC, for instance — is reported with a clear message instead of failing inside the scan. Browsers only expose the camera in a secure context — `localhost` qualifies, a plain-http LAN address does not, which is what `npm run dev:mobile` is for. Permission denied, no device, camera busy and insecure context each get their own message plus a file-upload fallback.
 
 ## 2. Demo credentials
 
@@ -63,6 +63,16 @@ Shown on the login screen; click any row to fill the form.
 The sidebar, the header actions and the route guards all respond to the signed-in role.
 
 ---
+
+### Authentication and access requests
+
+Officers are provisioned by the department, not self-registered, and the app follows that model:
+
+- **Sign in** posts the official ID (or departmental e-mail) and password to `POST /api/auth/login`. Passwords are stored as salted scrypt hashes in PostgreSQL; the API returns a signed bearer token (HMAC-SHA256, valid 4 hours, or 12 with "remember me") that every subsequent call carries. All `/api` routes except health and `/api/auth/*` refuse requests without a valid token, and the user, rule and reset routes additionally require the ADMIN role.
+- **Request access** (`/register`) creates the account in a `PENDING` state and notifies the administrator. A pending officer who tries to sign in is told the request is awaiting approval. The administrator approves or rejects it in **Settings → User Management**, where pending requests are counted and carry Approve / Reject actions.
+- The seeded demonstration accounts receive their published passwords on first start, so `npm run db:setup` and the credentials in section 2 keep working. Set `AUTH_SECRET` in the environment for any shared deployment; without it a development secret is used and a warning is logged.
+- **Access Requests** (administrator sidebar) is the approval queue: pending requests with the applicant's details, Approve (with the option to correct role, region and designation) and Reject (reason required). Each decision stores the reviewer, time and note on the account, raises a notification, and the page refreshes itself every 15 seconds so new requests appear without a reload. Rejected applicants are told so at sign-in and can be approved later.
+- In production the department's single sign-on (NIC Parichay) would replace the password step; the approval step and role assignment remain.
 
 ## 3. The demonstration flow
 
@@ -191,11 +201,11 @@ A package photograph defeats OCR in predictable ways, and each one is handled be
 | Camera not square to the label | **Deskew** | Row-projection variance search over ±12° in 0.5° steps; the angle that makes the text lines band most sharply is the tilt, and the image is rotated back |
 | Uneven exposure defeating one global threshold | **Sauvola binarisation** | Adaptive threshold that follows the local mean and standard deviation, so lit and shadowed regions binarise on their own terms |
 | Small print | **Upscale** | Bilinear up to ×3 toward a 2400 px long edge, with an unsharp mask on the grey variant |
-| Label is a fraction of the frame | **Refocus** | Ink-density bounds locate the printed panel *before* OCR; the crop is re-processed and read at full recogniser resolution |
+| Label is a fraction of the frame | **Refocus** | Ink-density bounds locate the printed panel *before* OCR; the crop is re-processed and read at full recogniser resolution. Two crops are read when they differ: the tight ink core, and a widened one that follows sparse print outward so a small batch line at the foot of a panel is not trimmed away |
 
-Captions and values on real cartons are often printed in different orientations — "Net Quantity:" running one way, "300g" another — so the extractor no longer depends on captions: dates fall back to chronological order (earliest = packed, latest = expiry), the price to the largest amount that is not a per-unit figure, the quantity to the largest total, and the manufacturer to the first corporate-entity line that is not the consumer-care block.
+When the image had to be turned to read the body text, the untouched orientation is read once more and merged: on many cartons the dot-matrix price, batch code and dates are printed upright while the captions run sideways, and each orientation is read where it is legible. A lone alphanumeric code such as "RU3743 L8B" is accepted as the batch number at reduced confidence when no caption links to it. Captions and values on real cartons are often printed in different orientations — "Net Quantity:" running one way, "300g" another — so the extractor no longer depends on captions: dates fall back to chronological order (earliest = packed, latest = expiry), the price to the largest amount that is not a per-unit figure, the quantity to the largest total, and the manufacturer to the first corporate-entity line that is not the consumer-care block.
 
-Two variants come out — lighting-flattened grey and Sauvola-binarised — because neither wins on every package. Both are recognised; the read that locates more declarations with more confidence is kept. If it is still thin, sparse-text and single-block segmentation are tried on the winning variant.
+Two variants come out — lighting-flattened grey and Sauvola-binarised — because neither wins on every package. Every pass that runs — each variant of each crop, the full frame, and the sparse-text pass when declarations are still missing — contributes to one merged result: for each of the twelve declarations the most confident reading from any pass is kept, and confidently read lines that no other pass covered are added to the extracted text. Choosing a single winning pass used to discard what the others had found, which showed up on real packages as declarations missing from one side of the panel.
 
 Every stage is an exact geometric transform (`toSourceBox`), so a word box in recogniser space maps back through pad → upscale → deskew → perspective → quarter turns → downscale → crop onto the original photograph. That is what lets the interface draw boxes on *your* picture and measure contrast from *your* pixels.
 
@@ -206,16 +216,17 @@ Every stage is an exact geometric transform (`toSourceBox`), so a word box in re
 | Clean label | 11/12 | **11/12** |
 | Rotated 6° | 5/12 | **11/12** |
 | Small label in a 12 MP frame | 3/12 | **11/12** |
-| Small + tilted + shadowed | 6/12 | **10/12** |
+| Small + tilted + shadowed | 6/12 | **11/12** |
 | Sideways carton, cream print on red, small in a cluttered frame | 0/12 | **10–11/12** |
 | Blue print on a green panel | — | **11/12** |
-| Photographed off-axis (perspective) | — | **10/12** |
+| Photographed off-axis (perspective) | — | **11/12** |
 | Off-axis and coloured | — | **9/12** |
+| Panel where a textured hero image holds most of the ink | 8/12 | **11/12** |
 | Inverted (white on black) | — | **11/12** |
 | Heavy shadow gradient | — | **11/12** |
 | Noise + heavy compression | — | **11/12** |
 | 720p webcam captures | 1–3/12 | 1–5/12, flagged POOR |
-| **Mean (14 images)** | 7.2/12 | **9.4/12** |
+| **Mean (15 images)** | 7.2/12 | **9.7/12** |
 
 The webcam rows are the honest limit: at 5–8 px of cap height there is nothing for any recogniser to read, so the pipeline says so rather than inventing a result.
 

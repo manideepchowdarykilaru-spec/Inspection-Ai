@@ -13,6 +13,10 @@ import type {
   User,
   Violation,
   AuditLogEntry,
+  AccessReviewRequest,
+  LoginRequest,
+  LoginResponse,
+  RegisterRequest,
   ScanImageInput,
   OcrQuality,
   PreprocessingSummary,
@@ -43,11 +47,36 @@ export class ApiError extends Error {
   }
 }
 
+/* ------------------------------------------------------------ Auth token */
+
+let authToken: string | null = null;
+const unauthorizedListeners = new Set<() => void>();
+
+/** Called by the auth service when a session starts, is restored, or ends. */
+export function setAuthToken(token: string | null) {
+  authToken = token;
+}
+
+/** Fires when a protected call is refused — the session has expired or been revoked. */
+export function onUnauthorized(listener: () => void) {
+  unauthorizedListeners.add(listener);
+  return () => {
+    unauthorizedListeners.delete(listener);
+  };
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${BASE}${path}`, {
-    headers: { 'Content-Type': 'application/json' },
     ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+      ...(init?.headers ?? {}),
+    },
   });
+  if (response.status === 401 && !path.startsWith('/api/auth/')) {
+    unauthorizedListeners.forEach((fn) => fn());
+  }
   if (!response.ok) {
     const detail = (await response
       .json()
@@ -56,6 +85,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   return response.status === 204 ? (undefined as T) : ((await response.json()) as T);
 }
+
+/* ------------------------------------------------------------------ Auth */
+
+export const login = (body: LoginRequest) =>
+  request<LoginResponse>('/api/auth/login', { method: 'POST', body: JSON.stringify(body) });
+
+export const registerOfficer = (body: RegisterRequest) =>
+  request<{ ok: boolean; status: 'PENDING' }>('/api/auth/register', { method: 'POST', body: JSON.stringify(body) });
 
 /* ------------------------------------------------------------- Bootstrap */
 
@@ -184,6 +221,9 @@ export const patchRule = (id: string, patch: Partial<ComplianceRule>) =>
 
 export const saveUser = (user: User) =>
   request<{ ok: true }>('/api/users', { method: 'POST', body: JSON.stringify(user) });
+
+export const reviewAccessRequest = (id: string, body: AccessReviewRequest) =>
+  request<{ user: User }>(`/api/users/${id}/review`, { method: 'PATCH', body: JSON.stringify(body) });
 
 export const patchUserStatus = (id: string, status: User['status']) =>
   request<{ ok: true }>(`/api/users/${id}/status`, {

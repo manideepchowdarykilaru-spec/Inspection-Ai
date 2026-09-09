@@ -116,18 +116,33 @@ function byPattern(segments: Segment[], pattern: RegExp, filter?: (s: Segment) =
 
 /* --------------------------------------------------------- Field readers */
 
+/** Lines that can never be the commodity name: running text, companies, claims, contacts. */
+const NOT_A_NAME =
+  /\b(?:ltd|limited|pvt|llp|inc|made in|certified|gmp|iso|e-?mail|website|www\.|\.com|toll|free|regd|office|directions|composition|ingredients|derived|contains|read the|see below|for name|batch|expiry|mfd|mfg|lic\.?\s*no|plot|distt|road|nagar|p\.?o\.?)\b/i;
+
+function nameLike(text: string): boolean {
+  const words = text.trim().split(/\s+/);
+  const letters = text.replace(/[^a-z]/gi, '').length;
+  return (
+    text.length >= 3 &&
+    text.length <= 48 &&
+    words.length <= 7 &&
+    letters >= text.length * 0.5 &&
+    !/[:;@]/.test(text) &&
+    !CAPTION_LIKE.test(text) &&
+    !QUANTITY.test(text) &&
+    !PRICE.test(text) &&
+    !DATE_LIKE.test(text) &&
+    !NOT_A_NAME.test(text)
+  );
+}
+
 function readProductIdentity(segments: Segment[], imageHeight: number): FieldHit | undefined {
-  const candidates = segments
-    .filter(
-      (s) =>
-        s.bbox.y1 < imageHeight * 0.42 &&
-        s.text.length >= 3 &&
-        !CAPTION_LIKE.test(s.text) &&
-        !QUANTITY.test(s.text) &&
-        !PRICE.test(s.text) &&
-        /[a-z]/i.test(s.text),
-    )
-    .sort((a, b) => b.capHeightPx - a.capHeightPx);
+  // The name is normally in the top part of an upright panel; on a carton read
+  // sideways it can sit anywhere, so the position preference is soft.
+  const nameLines = segments.filter((s) => nameLike(s.text));
+  const upper = nameLines.filter((s) => s.bbox.y1 < imageHeight * 0.42);
+  const candidates = (upper.length ? upper : nameLines).sort((a, b) => b.capHeightPx - a.capHeightPx);
 
   if (candidates.length === 0) return undefined;
 
@@ -143,8 +158,37 @@ function readProductIdentity(segments: Segment[], imageHeight: number): FieldHit
     largest.capHeightPx > second.capHeightPx * 1.25 &&
     largest.text === largest.text.toUpperCase();
 
-  const chosen = looksLikeBrandMark ? second : largest;
-  return { value: chosen.text, segments: [chosen], confidence: chosen.confidence };
+  let chosen = looksLikeBrandMark ? second : largest;
+
+  // A lone brand word ("Dabur") is the logo, not the commodity, when another
+  // line of similar size names the product with that brand in it.
+  if (!/\s/.test(chosen.text.trim())) {
+    const fuller = candidates.find(
+      (c) =>
+        c !== chosen &&
+        /\s/.test(c.text.trim()) &&
+        c.capHeightPx >= chosen.capHeightPx * 0.6 &&
+        c.text.toLowerCase().includes(chosen.text.trim().toLowerCase()),
+    );
+    if (fuller) chosen = fuller;
+  }
+
+  // Names wrap: a same-size name-like line directly below continues the name.
+  const used = [chosen];
+  const next = segmentBelow(segments, chosen, { maxGapPx: 50, minOverlap: 0.2 });
+  if (
+    next &&
+    nameLike(next.text) &&
+    Math.abs(next.capHeightPx - chosen.capHeightPx) <= chosen.capHeightPx * 0.25 &&
+    !CORPORATE.test(next.text)
+  ) {
+    used.push(next);
+  }
+  return {
+    value: used.map((u) => u.text.trim()).join(' '),
+    segments: used,
+    confidence: meanConfidence(used),
+  };
 }
 
 function readMrp(segments: Segment[]): FieldHit | undefined {
@@ -158,11 +202,16 @@ function readMrp(segments: Segment[]): FieldHit | undefined {
       .filter((seg) => PRICE.test(seg.text) && !/\bper\s*(?:g|kg|ml|l|unit|pc|piece)\b/i.test(seg.text))
       .map((seg) => {
         const m = seg.text.match(PRICE)!;
-        const amount = Number(m[0].replace(/[^\d.]/g, ''));
-        const captioned = /\bmrp\b|₹|\brs\b/i.test(seg.text);
-        return { seg, text: m[0], amount, rank: (captioned ? 1_000_000 : 0) + amount };
+        const amount = Number((m[0].match(/\d[\d,]*(?:\.\d{1,2})?/)?.[0] ?? '').replace(/,/g, ''));
+        const captioned = /\bmrp\b|₹|\brs\.?\b|\binr\b/i.test(m[0]) || /\bmrp\b/i.test(seg.text);
+        // A bare decimal only counts on a short line of its own — "31.04 g" inside
+        // a composition sentence is a weight, and a number followed by a unit never is.
+        const after = seg.text.slice((m.index ?? 0) + m[0].length);
+        const unitFollows = /^\s*(?:mg|g|gm|gms|kg|ml|l|ltr|%)\b/i.test(after);
+        const plausible = !unitFollows && (captioned || seg.text.trim().length <= 20);
+        return { seg, text: m[0], amount, plausible, rank: (captioned ? 1_000_000 : 0) + amount };
       })
-      .filter((c) => Number.isFinite(c.amount) && c.amount > 0)
+      .filter((c) => c.plausible && Number.isFinite(c.amount) && c.amount > 0)
       .sort((a, b) => b.rank - a.rank);
     if (candidates.length === 0) return undefined;
     const top = candidates[0];
@@ -178,9 +227,13 @@ function readMrp(segments: Segment[]): FieldHit | undefined {
       Math.abs(s.bbox.y0 - anchor.bbox.y1) < 90,
   );
   if (qualifier && !/incl/i.test(hit.value)) {
+    const amountOnly = hit.value.replace(caption, '').trim();
+    const isCaptionLine = caption.test(qualifier.text);
     return {
-      value: `${hit.value} ${qualifier.text}`.trim(),
-      segments: [...hit.segments, qualifier],
+      value: isCaptionLine
+        ? `${qualifier.text.match(caption)![0]} ${amountOnly} (incl. of all taxes)`
+        : `${hit.value} ${qualifier.text}`.trim(),
+      segments: hit.segments.includes(qualifier) ? hit.segments : [...hit.segments, qualifier],
       confidence: Math.min(hit.confidence, qualifier.confidence),
     };
   }
@@ -217,22 +270,39 @@ function readNetQuantity(segments: Segment[]): FieldHit | undefined {
 
 const CORPORATE = /\b(?:ltd|limited|pvt|private|llp|inc|industries|foods|mills|co)\b\.?/i;
 
-function readManufacturer(segments: Segment[]): FieldHit | undefined {
+/** "BD) DABUR INDIA LTD., Vill. …" — multi-unit cartons key each unit by a short code. */
+const UNIT_CODE = /^\s*([A-Z0-9]{1,3})\)\s*/;
+
+function readManufacturer(segments: Segment[], batchCode?: string): FieldHit | undefined {
   const byLabel = byCaption(segments, {
     caption:
       /\b(?:manufactured\s*(?:&|and)?\s*packed\s*by|manufactured\s*by|packed\s*by|marketed\s*by|mfd\.?\s*by|manufacturer|mfg\.?\s*by)\b/i,
     maxGapPx: 90,
   });
   if (byLabel) return byLabel;
-  // Uncaptioned: the first line naming a corporate entity that is not the
-  // consumer-care block.
-  const entity = segments.find(
+
+  // Uncaptioned: lines naming a corporate entity that are not the consumer-care block.
+  const entities = segments.filter(
     (seg) => CORPORATE.test(seg.text) && !/consumer|care|cares|toll|helpline|e-?mail/i.test(seg.text),
   );
-  if (!entity) return undefined;
+  if (entities.length === 0) return undefined;
+
+  // "For name & address of Mfg. unit, read the first two characters of the batch
+  // code": when the batch code starts with a unit code printed on the panel,
+  // that unit is the manufacturer of this very pack.
+  const prefix = batchCode?.match(/^([A-Z]{1,3})/i)?.[1]?.toUpperCase();
+  const keyed = prefix
+    ? entities.find((seg) => seg.text.match(UNIT_CODE)?.[1]?.toUpperCase() === prefix)
+    : undefined;
+  const entity = keyed ?? entities[0];
+
   // Stop at the start of an address so the name stands alone.
-  const name = entity.text
-    .split(/,\s*(?=(?:vill|plot|p\.?o\.?|sy\.?|unit|shed|sector|no\.?\s*\d|\d))/i)[0]
+  const stripped = entity.text.replace(UNIT_CODE, '');
+  const corporateAt = stripped.search(CORPORATE);
+  const commaAfter = corporateAt >= 0 ? stripped.indexOf(',', corporateAt) : -1;
+  const name = (commaAfter > 0 ? stripped.slice(0, commaAfter) : stripped)
+    .split(/,\s*(?=(?:vill|plot|p\.?o\.?|sy\.?|unit|shed|sector|i\.?g\.?c|no\.?\s*\d|\d))/i)[0]
+    .replace(/\s*\((?:unit|plant)[^)]*\)\s*$/i, '')
     .trim();
   return { value: name || entity.text, segments: [entity], confidence: entity.confidence };
 }
@@ -241,16 +311,36 @@ function readAddress(segments: Segment[], manufacturer?: FieldHit): FieldHit | u
   if (!manufacturer) {
     return byPattern(segments, /.+/, (s) => PIN_CODE.test(s.text));
   }
-  // Cartons often run the name and address together on one line.
-  const inline = manufacturer.segments.find((seg) => PIN_CODE.test(seg.text.replace(/\s/g, '')));
-  if (inline) {
-    const at = inline.text.indexOf(manufacturer.value);
-    const afterName = at >= 0 ? inline.text.slice(at + manufacturer.value.length) : inline.text;
-    const address = afterName.replace(/^[\s,.\-–]+/, '').trim();
-    if (address.length > 8) return { value: address, segments: [inline], confidence: inline.confidence };
-  }
+  // Cartons often run the name and address together on one line — and on to
+  // the next when the address is long. Start after the name and continue
+  // downward until a PIN code closes the address.
   const anchor = manufacturer.segments[manufacturer.segments.length - 1];
   const collected: Segment[] = [];
+  const stripped = anchor.text.replace(UNIT_CODE, '');
+  const at = stripped.indexOf(manufacturer.value);
+  const afterName = at >= 0 ? stripped.slice(at + manufacturer.value.length) : '';
+  const inlineAddress = afterName
+    .replace(/^\s*\((?:unit|plant)[^)]*\)/i, '')
+    .replace(/^[\s,.\-–]+/, '')
+    .replace(/\s*mfg\.?\s*lic.*$/i, '')
+    .trim();
+  if (inlineAddress.length > 8) {
+    if (PIN_CODE.test(inlineAddress.replace(/\s/g, ''))) {
+      return { value: inlineAddress, segments: [anchor], confidence: anchor.confidence };
+    }
+    let cursor: Segment | undefined = anchor;
+    const parts = [inlineAddress];
+    const used = [anchor];
+    for (let i = 0; i < 3 && cursor; i++) {
+      const next: Segment | undefined = segmentBelow(segments, cursor, { maxGapPx: 70, minOverlap: 0.2 });
+      if (!next || UNIT_CODE.test(next.text) || CAPTION_LIKE.test(next.text)) break;
+      parts.push(next.text.replace(/\s*mfg\.?\s*lic.*$/i, '').trim());
+      used.push(next);
+      if (PIN_CODE.test(next.text.replace(/\s/g, ''))) break;
+      cursor = next;
+    }
+    return { value: parts.filter(Boolean).join(' '), segments: used, confidence: meanConfidence(used) };
+  }
   let cursor = anchor;
   for (let i = 0; i < 4; i++) {
     const next = segmentBelow(segments, cursor, { maxGapPx: 70, minOverlap: 0.2 });
@@ -267,11 +357,24 @@ function readAddress(segments: Segment[], manufacturer?: FieldHit): FieldHit | u
   };
 }
 
+const CONTACT_LINE = /toll|free|1800|helpline|e-?mail|website|www\.|\.com\b|\.in\b|call|write|cell|desk/i;
+const ADDRESS_LINE = /\b(?:road|street|marg|nagar|house|office|park|estate|plot|floor|sector|p\.?o\.?|distt|pin)\b|\b\d{6}\b/i;
+
 function readConsumerCare(segments: Segment[]): FieldHit | undefined {
-  const caption =
-    /\b(?:consumer\s*(?:care|cell|complaints?|service)|customer\s*(?:care|service)|for\s*(?:any\s*)?complaints?|helpline|toll[\s-]*free)\b/i;
-  const captionSegment = segments.find((s) => caption.test(s.text));
-  if (!captionSegment) {
+  // Most specific caption first: "Consumer Care", "Dabur Cares", "For complaints",
+  // then a bare helpline / toll-free line.
+  const captions = [
+    /\b(?:consumer\s*(?:care|cell|complaints?|service)|customer\s*(?:care|service|support))\b/i,
+    /\b(?:\w+\s+cares|for\s*(?:any\s*)?complaints?|feedback|call\s*or\s*write)\b/i,
+    /\b(?:helpline|toll[\s-]*free)\b/i,
+  ];
+  let caption: RegExp | undefined;
+  let captionSegment: Segment | undefined;
+  for (const c of captions) {
+    captionSegment = segments.find((s) => c.test(s.text));
+    if (captionSegment) { caption = c; break; }
+  }
+  if (!captionSegment || !caption) {
     // Some labels print only the contact details.
     const contact = segments.filter((s) => EMAIL.test(s.text) || /toll|1800/i.test(s.text));
     if (contact.length === 0) return undefined;
@@ -280,16 +383,20 @@ function readConsumerCare(segments: Segment[]): FieldHit | undefined {
 
   const collected: Segment[] = [];
   const inline = inlineRemainder(captionSegment, caption);
-  if (inline) collected.push(captionSegment);
+  if (inline || PHONE.test(captionSegment.text) || EMAIL.test(captionSegment.text)) collected.push(captionSegment);
 
   let cursor = captionSegment;
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 6; i++) {
     const next = segmentBelow(segments, cursor, { maxGapPx: 70, minOverlap: 0.15 });
     if (!next) break;
+    // The company name inside the block ("Consumer Cell, Shakti Agro Mills Pvt. Ltd.") belongs to it.
     const isContact =
-      PHONE.test(next.text) || EMAIL.test(next.text) || /toll|free|ltd|pvt|cell|desk/i.test(next.text);
-    if (!isContact && CAPTION_LIKE.test(next.text)) break;
-    if (!isContact && i > 0) break;
+      PHONE.test(next.text) || EMAIL.test(next.text) || CONTACT_LINE.test(next.text) || CORPORATE.test(next.text);
+    const isAddress = ADDRESS_LINE.test(next.text);
+    const otherCaption = CAPTION_LIKE.test(next.text) && !/consumer|customer/i.test(next.text);
+    if (otherCaption && !isContact) break;
+    // The first line under the caption is taken on trust; later ones must look like contact details.
+    if (!isContact && !isAddress && i > 0) break;
     collected.push(next);
     cursor = next;
   }
@@ -341,6 +448,7 @@ function readPackingDate(segments: Segment[]): FieldHit | undefined {
 function readBestBefore(segments: Segment[]): FieldHit | undefined {
   const byLabel = byCaption(segments, {
     caption: /\b(?:best\s*before|use\s*by|expiry\s*date|exp\.?\s*date|best\s*before\s*end|expiry|exp\.?)\b/i,
+    accept: new RegExp(`${DATE_LIKE.source}|\\b\\d{1,2}\\s*(?:months?|years?|days?)\\b`, 'i'),
     maxGapPx: 90,
   });
   if (byLabel) return byLabel;
@@ -356,12 +464,37 @@ function readBestBefore(segments: Segment[]): FieldHit | undefined {
   };
 }
 
+const COUNTRIES = new Set(
+  [
+    'india', 'china', 'usa', 'uk', 'uae', 'sri lanka', 'nepal', 'bangladesh', 'bhutan', 'pakistan', 'thailand',
+    'malaysia', 'indonesia', 'vietnam', 'singapore', 'japan', 'korea', 'south korea', 'taiwan', 'italy', 'germany',
+    'france', 'spain', 'netherlands', 'belgium', 'switzerland', 'austria', 'poland', 'turkey', 'australia',
+    'new zealand', 'canada', 'mexico', 'brazil', 'argentina', 'chile', 'egypt', 'kenya', 'south africa',
+    'saudi arabia', 'oman', 'qatar', 'iran', 'russia', 'ukraine', 'ireland', 'denmark', 'sweden', 'norway',
+    'finland', 'greece', 'portugal', 'philippines', 'myanmar', 'cambodia', 'hong kong',
+  ],
+);
+
 function readCountry(segments: Segment[]): FieldHit | undefined {
-  return byCaption(segments, {
+  const byLabel = byCaption(segments, {
     caption: /\bcountry\s*of\s*origin\b/i,
     accept: /[a-z]{3,}/i,
     maxGapPx: 90,
   });
+  if (byLabel) return byLabel;
+  // "Made in India", "Product of Sri Lanka", "Manufactured in India".
+  const made = /\b(?:made|manufactured|produced|product|packed)\s+(?:in|of)\s+([A-Za-z]+(?:\s+[A-Za-z]+)?)/i;
+  for (const seg of segments) {
+    const m = seg.text.match(made);
+    if (!m) continue;
+    const words = m[1].split(/\s+/);
+    const candidate = [words.slice(0, 2).join(' '), words[0]].find((w) => COUNTRIES.has(w.toLowerCase()));
+    if (candidate) {
+      const country = candidate.replace(/\w\S*/g, (w) => w[0].toUpperCase() + w.slice(1).toLowerCase());
+      return { value: /^u/i.test(country) && country.length <= 3 ? country.toUpperCase() : country, segments: [seg], confidence: seg.confidence };
+    }
+  }
+  return undefined;
 }
 
 function readImporter(segments: Segment[]): FieldHit | undefined {
@@ -380,19 +513,46 @@ function readFssai(segments: Segment[]): FieldHit | undefined {
   );
 }
 
+/** A short alphanumeric code such as "RU3743 L8B" or "SG-2607-D12". */
+const BATCH_CODE = /^[A-Z]{1,3}[\s\-–—]?\d{3,6}(?:[\s\-–—]?[A-Z0-9]{1,5}){0,2}[.,]?$/i;
+
 function readBatch(segments: Segment[]): FieldHit | undefined {
-  return byCaption(segments, {
-    caption: /\b(?:batch\s*(?:no\.?|number)?|lot\s*(?:no\.?|number)?|b\.?\s*no\.?)\b/i,
-    accept: /[a-z0-9]/i,
+  const captioned = byCaption(segments, {
+    caption: /\b(?:batch\s*(?:no\.?|number|code)?|lot\s*(?:no\.?|number)?|b\.?\s*no\.?)\b/i,
+    // A code: has a digit, at most four tokens, and no word of four or more
+    // lower-case letters (which is how "batch code & see below" is told apart).
+    // Tokens may start with a misread symbol ("$G-2607-D12" for "SG-2607-D12").
+    accept: /^(?=.*\d)(?!.*\b[a-z]{4,}\b)\S+(?:\s+\S+){0,3}\s*$/,
     maxGapPx: 90,
   });
+  if (captioned) return captioned;
+
+  // Caption-free fallback. Batch codes are usually dot-matrix printed at
+  // packing time, often in a different orientation from their caption, so the
+  // caption→value link is frequently broken in a photograph. A lone code that
+  // is not a date, price, quantity or a long numeric run (barcode, licence) is
+  // accepted at reduced confidence.
+  const candidates = segments.filter((s) => {
+    const t = s.text.trim();
+    return (
+      BATCH_CODE.test(t) &&
+      !DATE_LIKE.test(t) &&
+      !PRICE.test(t) &&
+      !QUANTITY.test(t) &&
+      !/^\d+$/.test(t.replace(/[\s-]/g, ''))
+    );
+  });
+  if (candidates.length === 0) return undefined;
+  const top = [...candidates].sort((a, b) => b.confidence - a.confidence)[0];
+  return { value: top.text.trim(), segments: [top], confidence: Math.min(top.confidence, 0.7) };
 }
 
 export function extractFields(
   segments: Segment[],
   imageHeight: number,
 ): Partial<Record<DeclarationKey, FieldHit>> {
-  const manufacturer = readManufacturer(segments);
+  const batch = readBatch(segments);
+  const manufacturer = readManufacturer(segments, batch?.value);
   const fields: Partial<Record<DeclarationKey, FieldHit>> = {
     PRODUCT_IDENTITY: readProductIdentity(segments, imageHeight),
     MANUFACTURER_NAME: manufacturer,
@@ -405,7 +565,7 @@ export function extractFields(
     COUNTRY_OF_ORIGIN: readCountry(segments),
     IMPORTER_DETAILS: readImporter(segments),
     FSSAI_LICENSE: readFssai(segments),
-    BATCH_NUMBER: readBatch(segments),
+    BATCH_NUMBER: batch,
   };
 
   Object.keys(fields).forEach((key) => {

@@ -1,19 +1,22 @@
 import { useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { AlertCircle, Eye, EyeOff, Lock, ScanLine, ShieldCheck } from 'lucide-react';
+import { AlertCircle, ChevronDown, Eye, EyeOff, IdCard, KeyRound } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
-import { Button } from '@/components/ui/Button';
-import { Field, Input } from '@/components/ui/Form';
+import { BrandLogo } from '@/components/ui/BrandLogo';
 import { DEMO_CREDENTIALS, USERS } from '@shared/data/mockData';
 import { ROLE_LABEL } from '@shared/lib/format';
+import { cn } from '@/lib/utils';
 
 interface FormValues {
   officialId: string;
   password: string;
   remember: boolean;
 }
+
+const FIELD =
+  'flex h-14 w-full items-center gap-3 rounded-full border-2 border-slate-900/80 bg-white px-5 text-base text-slate-900 transition-colors focus-within:border-amber-500 focus-within:ring-4 focus-within:ring-amber-300/40';
 
 export default function Login() {
   const { signIn } = useAuth();
@@ -22,6 +25,7 @@ export default function Login() {
   const toast = useToast();
   const [showPassword, setShowPassword] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [demoOpen, setDemoOpen] = useState(false);
 
   const {
     register,
@@ -48,164 +52,133 @@ export default function Login() {
     setValue('officialId', officialId);
     setValue('password', password);
     setFormError(null);
+    setDemoOpen(false);
   };
 
+  const fieldError = errors.officialId?.message ?? errors.password?.message ?? null;
+
   return (
-    <div className="grid min-h-screen lg:grid-cols-[1.05fr_0.95fr]">
-      {/* Brand / assurance panel */}
-      <section className="relative hidden flex-col justify-between overflow-hidden bg-navy-900 p-10 lg:flex">
-        <div className="gov-stripe absolute inset-0 opacity-60" aria-hidden />
-        <div className="relative">
-          <Link to="/" className="inline-flex items-center gap-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-md bg-white/10 ring-1 ring-white/15">
-              <ScanLine size={20} className="text-accent-400" />
-            </span>
-            <span>
-              <span className="block text-base font-extrabold tracking-tight text-white">LM-Inspect AI</span>
-              <span className="block text-2xs text-navy-300">
-                Legal Metrology Packaged Commodity Compliance System
-              </span>
-            </span>
-          </Link>
-        </div>
+    <div className="relative min-h-screen overflow-hidden bg-white text-slate-900">
+      {/* Watercolour wash across the top of the screen */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 top-0 h-[62vh] min-h-[420px]"
+        style={{
+          background:
+            'radial-gradient(120% 70% at 15% 10%, #F7C531 0%, #F9D45C 38%, rgba(250, 222, 120, 0.85) 55%, rgba(253, 240, 190, 0.35) 72%, rgba(255,255,255,0) 86%),' +
+            'radial-gradient(70% 55% at 85% 35%, rgba(247, 197, 49, 0.9) 0%, rgba(249, 212, 92, 0.6) 40%, rgba(255,255,255,0) 75%),' +
+            'radial-gradient(60% 45% at 30% 70%, rgba(249, 212, 92, 0.55) 0%, rgba(255,255,255,0) 70%)',
+          maskImage:
+            'radial-gradient(140% 100% at 50% -10%, #000 55%, rgba(0,0,0,0.6) 72%, transparent 100%)',
+          WebkitMaskImage:
+            'radial-gradient(140% 100% at 50% -10%, #000 55%, rgba(0,0,0,0.6) 72%, transparent 100%)',
+        }}
+      />
 
-        <div className="relative max-w-md">
-          <h2 className="text-2xl font-extrabold leading-tight tracking-tight text-white">
-            Screening packaged commodity declarations against the LMPC Rules, 2011
-          </h2>
-          <p className="mt-4 text-sm leading-relaxed text-navy-200">
-            Scan a package, extract its declarations, validate them against configurable rules and compile an
-            evidence-linked inspection report — with every AI finding traceable to the rule and the region of
-            the label it came from.
-          </p>
-          <ul className="mt-7 space-y-2.5 text-sm text-navy-100">
-            {[
-              'Declaration-level extraction with confidence scores',
-              'Evidence regions highlighted on the package image',
-              'Configurable rule engine maintained by the department',
-              'Audit trail on every inspection action',
-            ].map((item) => (
-              <li key={item} className="flex items-start gap-2.5">
-                <ShieldCheck size={15} className="mt-0.5 shrink-0 text-accent-400" />
-                {item}
-              </li>
-            ))}
-          </ul>
-        </div>
+      <main className="relative mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-10 pt-10 sm:pt-14">
+        <Link to="/" className="mx-auto block w-56 sm:w-64" aria-label="LMPC home">
+          <BrandLogo className="h-auto w-full" />
+        </Link>
 
-        <p className="relative text-2xs leading-relaxed text-navy-300">
-          AI-generated findings assist inspection and screening. Final determination is made by the authorised
-          Legal Metrology official based on applicable law, rules and physical verification where required.
-        </p>
-      </section>
+        <h1
+          className="mt-10 text-center text-5xl font-extrabold tracking-tight text-slate-900 sm:mt-12"
+          style={{ fontFamily: "'Playfair Display', Georgia, 'Times New Roman', serif" }}
+        >
+          Sign In
+        </h1>
 
-      {/* Sign-in panel */}
-      <section className="flex items-center justify-center bg-slate-100 px-4 py-10 sm:px-8">
-        <div className="w-full max-w-[26rem]">
-          <div className="mb-6 flex items-center gap-3 lg:hidden">
-            <span className="flex h-10 w-10 items-center justify-center rounded-md bg-navy-900">
-              <ScanLine size={20} className="text-accent-400" />
-            </span>
-            <div>
-              <p className="text-base font-extrabold tracking-tight text-slate-900">LM-Inspect AI</p>
-              <p className="text-2xs text-slate-500">Legal Metrology Compliance System</p>
-            </div>
-          </div>
+        <form onSubmit={onSubmit} className="mt-8 space-y-4" noValidate>
+          <label className={cn(FIELD, errors.officialId && 'border-red-600')}>
+            <IdCard size={22} className="shrink-0 text-slate-900" aria-hidden />
+            <input
+              id="officialId"
+              autoComplete="username"
+              placeholder="Official ID or Email ID"
+              aria-label="Official ID or Email ID"
+              aria-invalid={!!errors.officialId}
+              className="h-full w-full bg-transparent placeholder:text-slate-500 focus:outline-none"
+              {...register('officialId', { required: 'Enter your Official ID or Email ID' })}
+            />
+          </label>
 
-          <div className="surface p-6 sm:p-7">
-            <h1 className="text-lg font-bold tracking-tight text-slate-900">Official sign in</h1>
-            <p className="mt-1 text-xs leading-relaxed text-slate-500">
-              Use your departmental official ID to access the inspection workspace.
+          <label className={cn(FIELD, errors.password && 'border-red-600')}>
+            <KeyRound size={22} className="shrink-0 text-slate-900" aria-hidden />
+            <input
+              id="password"
+              type={showPassword ? 'text' : 'password'}
+              autoComplete="current-password"
+              placeholder="Password"
+              aria-label="Password"
+              aria-invalid={!!errors.password}
+              className="h-full w-full bg-transparent placeholder:text-slate-500 focus:outline-none"
+              {...register('password', { required: 'Enter your password' })}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword((s) => !s)}
+              className="shrink-0 rounded-full p-1 text-slate-500 transition-colors hover:text-slate-800"
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
+            >
+              {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+            </button>
+          </label>
+
+          {(fieldError || formError) && (
+            <p role="alert" className="flex items-start justify-center gap-1.5 text-center text-sm font-medium text-red-700">
+              <AlertCircle size={16} className="mt-0.5 shrink-0" />
+              {formError ?? fieldError}
             </p>
+          )}
 
-            {formError && (
-              <div
-                role="alert"
-                className="mt-4 flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2.5"
-              >
-                <AlertCircle size={15} className="mt-0.5 shrink-0 text-red-600" />
-                <p className="text-xs leading-relaxed text-red-800">{formError}</p>
-              </div>
-            )}
-
-            <form onSubmit={onSubmit} className="mt-5 space-y-4" noValidate>
-              <Field
-                label="Official ID / Email"
-                htmlFor="officialId"
-                required
-                error={errors.officialId?.message}
-              >
-                <Input
-                  id="officialId"
-                  autoComplete="username"
-                  placeholder="LM-TS-INS-1042"
-                  aria-invalid={!!errors.officialId}
-                  {...register('officialId', { required: 'Official ID is required' })}
-                />
-              </Field>
-
-              <Field label="Password" htmlFor="password" required error={errors.password?.message}>
-                <div className="relative">
-                  <Input
-                    id="password"
-                    type={showPassword ? 'text' : 'password'}
-                    autoComplete="current-password"
-                    placeholder="••••••••••"
-                    className="pr-10"
-                    aria-invalid={!!errors.password}
-                    {...register('password', { required: 'Password is required' })}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword((s) => !s)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 transition-colors hover:text-slate-600"
-                    aria-label={showPassword ? 'Hide password' : 'Show password'}
-                  >
-                    {showPassword ? <EyeOff size={15} /> : <Eye size={15} />}
-                  </button>
-                </div>
-              </Field>
-
-              <div className="flex items-center justify-between">
-                <label className="flex cursor-pointer items-center gap-2 text-xs text-slate-600">
-                  <input
-                    type="checkbox"
-                    className="h-3.5 w-3.5 rounded border-slate-300 text-brand-700 focus:ring-brand-600"
-                    {...register('remember')}
-                  />
-                  Remember me on this device
-                </label>
-                <button
-                  type="button"
-                  onClick={() =>
-                    toast.info(
-                      'Password reset',
-                      'Password resets are handled by the departmental IT administrator.',
-                    )
-                  }
-                  className="text-xs font-semibold text-brand-700 hover:underline"
-                >
-                  Forgot password?
-                </button>
-              </div>
-
-              <Button type="submit" size="lg" className="w-full justify-center" loading={isSubmitting}>
-                {isSubmitting ? 'Verifying credentials…' : 'Sign In'}
-              </Button>
-            </form>
-
-            <div className="mt-5 flex items-start gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2.5">
-              <Lock size={13} className="mt-0.5 shrink-0 text-slate-500" />
-              <p className="text-2xs leading-relaxed text-slate-600">
-                Authorized access only. Inspection data is protected. All actions performed in this system are
-                recorded in an audit trail against your official identity.
-              </p>
-            </div>
+          <div className="flex items-center justify-between px-1 pt-1">
+            <label className="flex cursor-pointer items-center gap-2 text-sm text-slate-700">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-slate-400 text-amber-500 focus:ring-amber-400"
+                {...register('remember')}
+              />
+              Remember me
+            </label>
+            <button
+              type="button"
+              onClick={() =>
+                toast.info('Password reset', 'Password resets are handled by the department administrator.')
+              }
+              className="text-base font-bold text-slate-900 underline underline-offset-4 hover:text-amber-700"
+            >
+              Forgot Password?
+            </button>
           </div>
 
-          <div className="mt-4 rounded-md border border-dashed border-slate-300 bg-white p-3.5">
-            <p className="label-text mb-2">Demonstration accounts</p>
-            <div className="space-y-1.5">
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className="mx-auto mt-2 flex h-16 w-full max-w-[26rem] items-center justify-center rounded-full bg-[#F6C21B] text-lg font-semibold uppercase tracking-[0.18em] text-slate-900 shadow-[0_10px_30px_-10px_rgba(246,194,27,0.8)] transition-transform hover:brightness-95 active:scale-[0.99] disabled:cursor-wait disabled:opacity-70"
+          >
+            {isSubmitting ? 'Signing in…' : 'Sign In'}
+          </button>
+        </form>
+
+        <p className="mt-8 text-center text-sm text-slate-700">
+          New to the department?{' '}
+          <Link to="/register" className="font-bold text-slate-900 underline underline-offset-4 hover:text-amber-700">
+            Request access
+          </Link>
+        </p>
+
+        {/* Demonstration accounts, folded away so the screen stays clean */}
+        <div className="mt-auto pt-10">
+          <button
+            type="button"
+            onClick={() => setDemoOpen((o) => !o)}
+            className="mx-auto flex items-center gap-1 text-xs font-semibold uppercase tracking-wider text-slate-500 hover:text-slate-800"
+            aria-expanded={demoOpen}
+          >
+            Demonstration accounts
+            <ChevronDown size={14} className={cn('transition-transform', demoOpen && 'rotate-180')} />
+          </button>
+          {demoOpen && (
+            <div className="mt-3 space-y-1.5">
               {DEMO_CREDENTIALS.map((c) => {
                 const account = USERS.find((u) => u.officialId === c.officialId)!;
                 return (
@@ -213,33 +186,27 @@ export default function Login() {
                     key={c.officialId}
                     type="button"
                     onClick={() => fillDemo(c.officialId, c.password)}
-                    className="flex w-full items-center gap-3 rounded border border-slate-200 px-2.5 py-2 text-left transition-colors hover:border-brand-300 hover:bg-brand-50"
+                    className="flex w-full items-center gap-3 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-left transition-colors hover:border-amber-400 hover:bg-amber-50"
                   >
-                    <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-navy-900 text-[10px] font-bold text-white">
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-900 text-[10px] font-bold text-white">
                       {account.avatarInitials}
                     </span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-xs font-semibold text-slate-800">
+                      <span className="block truncate text-sm font-semibold text-slate-800">
                         {ROLE_LABEL[c.role]} · {account.name}
                       </span>
-                      <span className="block truncate font-mono text-2xs text-slate-500">
+                      <span className="block truncate font-mono text-xs text-slate-500">
                         {c.officialId} / {c.password}
                       </span>
                     </span>
-                    <span className="shrink-0 text-2xs font-semibold text-brand-700">Use</span>
+                    <span className="shrink-0 text-xs font-bold text-amber-700">Use</span>
                   </button>
                 );
               })}
             </div>
-          </div>
-
-          <p className="mt-4 text-center text-2xs text-slate-400">
-            <Link to="/" className="font-medium text-slate-500 hover:text-slate-700 hover:underline">
-              Back to platform overview
-            </Link>
-          </p>
+          )}
         </div>
-      </section>
+      </main>
     </div>
   );
 }

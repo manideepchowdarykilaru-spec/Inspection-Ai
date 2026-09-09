@@ -32,6 +32,13 @@ export const pool = new Pool({
   keepAlive: true,
 });
 
+// A hosted database drops idle connections after a few minutes. The pg driver reports
+// that on the pool as an 'error' event, and an unhandled 'error' event kills
+// the process — so it is logged and the dead client is simply discarded.
+pool.on('error', (error) => {
+  console.warn('[db] idle connection dropped:', error.message);
+});
+
 export async function assertConnection() {
   try {
     await pool.query('SELECT 1');

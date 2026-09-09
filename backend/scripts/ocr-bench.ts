@@ -24,6 +24,8 @@ const FILES = [
   'perspective.jpg',
   'coloured.jpg',
   'perspective-coloured.jpg',
+  'edge-text.jpg',
+  'mixed-orientation.jpg',
   'webcam-close.jpg',
   'webcam-720p.jpg',
 ];

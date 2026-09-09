@@ -85,8 +85,10 @@ export interface PreprocessReport {
 export interface PreprocessResult {
   variants: PreprocessVariant[];
   report: PreprocessReport;
-  /** Where the print sits in the ORIGINAL image, from ink density; null if unclear. */
+  /** Where the print sits in the ORIGINAL image, widened through sparse print; null if unclear. */
   textRegion: Region | null;
+  /** The tight ink-mass core of textRegion, before widening. */
+  textRegionCore: Region | null;
   /** Downscaled PNG previews so the interface can show what the recogniser saw. */
   previews: { normalised: Buffer; binarised: Buffer };
 }
@@ -688,6 +690,56 @@ function inkRegion(binary: GreyImage): Region | null {
   const [y0, y1] = bounds(rows);
   const [x0, x1] = bounds(cols);
   if (x1 - x0 < width * 0.05 || y1 - y0 < height * 0.05) return null;
+
+  return { x0, y0, x1: x1 + 1, y1: y1 + 1 };
+}
+
+/**
+ * Widens an ink-mass region through sparse print.
+ *
+ * The mass bounds discard the outer 1.5% of ink on each side, which is also a
+ * small batch line at the foot of a panel whenever a photograph or logo holds
+ * most of the ink. Rows and columns that still carry print are added, gaps the
+ * size of line spacing are tolerated, and a longer gap ends the panel. Used for
+ * the refocus crop only: the perspective detector wants the tight core, whose
+ * edges are where the panel's borders are.
+ */
+function growInkRegion(binary: GreyImage, core: Region): Region {
+  const { width, height, data } = binary;
+  const rows = new Float64Array(height);
+  const cols = new Float64Array(width);
+  for (let y = 0; y < height; y++) {
+    const row = y * width;
+    for (let x = 0; x < width; x++) {
+      if (data[row + x] < 128) { rows[y]++; cols[x]++; }
+    }
+  }
+  const grow = (profile: Float64Array, start: number, end: number, axisLength: number, rowLength: number) => {
+    let coreSum = 0;
+    for (let i = start; i <= end; i++) coreSum += profile[i];
+    const coreMean = coreSum / Math.max(1, end - start + 1);
+    const floor = Math.max(coreMean * 0.06, rowLength * 0.003);
+    const maxGap = Math.max(4, Math.round(axisLength * 0.04));
+    let s = start;
+    let gap = 0;
+    for (let i = start - 1; i >= 0; i--) {
+      if (profile[i] >= floor) { s = i; gap = 0; } else if (++gap > maxGap) break;
+    }
+    let e = end;
+    gap = 0;
+    for (let i = end + 1; i < profile.length; i++) {
+      if (profile[i] >= floor) { e = i; gap = 0; } else if (++gap > maxGap) break;
+    }
+    return [s, e] as const;
+  };
+  const [y0, y1] = grow(rows, core.y0, core.y1 - 1, height, width);
+  const [x0, x1] = grow(cols, core.x0, core.x1 - 1, width, height);
+
+  // If growing more than doubles the area, the "print" beyond the core is
+  // background clutter and the mass bounds were the better estimate.
+  const coreArea = (core.x1 - core.x0) * (core.y1 - core.y0);
+  const grownArea = (x1 - x0 + 1) * (y1 - y0 + 1);
+  if (grownArea > coreArea * 2.2) return core;
   return { x0, y0, x1: x1 + 1, y1: y1 + 1 };
 }
 
@@ -1007,13 +1059,14 @@ export async function preprocessForOcr(
   // Ink region first: it anchors both the panel-edge search and the refocus crop.
   const sauvolaWindow = Math.max(15, (Math.floor(Math.min(grey.width, grey.height) / 40) | 1));
   let quickBinary = sauvola(grey, sauvolaWindow);
-  const textRegion = inkRegion(quickBinary);
+  const inkCore = inkRegion(quickBinary);
+  const textRegion = inkCore ? growInkRegion(quickBinary, inkCore) : null;
 
   // Perspective: a panel photographed off-axis is a trapezoid; the recogniser
   // wants a rectangle. Only applied when four plausible panel edges are found.
   let perspective: number[] | undefined;
   let perspectiveKeystone = 0;
-  const quad = textRegion ? detectPanelQuad(grey, textRegion) : null;
+  const quad = inkCore ? detectPanelQuad(grey, inkCore) : null;
   if (quad) {
     const rectified = rectify(grey, quad);
     grey = rectified.image;
@@ -1076,9 +1129,11 @@ export async function preprocessForOcr(
     perspective: undefined,
   };
   const textRegionSource: Region | null = textRegion ? toSourceBox(textRegion, regionGeometry) : null;
+  const textRegionCoreSource: Region | null = inkCore ? toSourceBox(inkCore, regionGeometry) : null;
 
   return {
     textRegion: textRegionSource,
+    textRegionCore: textRegionCoreSource,
     variants: [
       {
         name: 'normalised',

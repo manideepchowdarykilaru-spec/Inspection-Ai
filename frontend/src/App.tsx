@@ -6,6 +6,7 @@ import { ToastProvider } from '@/context/ToastContext';
 import { AppLayout } from '@/layouts/AppLayout';
 import Landing from '@/pages/Landing';
 import Login from '@/pages/Login';
+import Register from '@/pages/Register';
 import { RequireCapability } from '@/components/layout/RequireCapability';
 import { DataGate } from '@/components/layout/DataGate';
 
@@ -30,6 +31,7 @@ const Analytics = lazy(() => import('@/pages/Analytics'));
 const EvidenceGallery = lazy(() => import('@/pages/EvidenceGallery'));
 const Notifications = lazy(() => import('@/pages/Notifications'));
 const UserManagement = lazy(() => import('@/pages/UserManagement'));
+const AccessRequests = lazy(() => import('@/pages/AccessRequests'));
 const RuleConfiguration = lazy(() => import('@/pages/RuleConfiguration'));
 const Settings = lazy(() => import('@/pages/Settings'));
 
@@ -53,6 +55,7 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Landing />} />
           <Route path="/login" element={<Login />} />
+          <Route path="/register" element={<Register />} />
 
           {/* Only the workspace needs the inspection records; the public screens do not wait for them. */}
           <Route
@@ -82,6 +85,14 @@ export default function App() {
               element={
                 <RequireCapability capability="users:manage">
                   <Screen><UserManagement /></Screen>
+                </RequireCapability>
+              }
+            />
+            <Route
+              path="access-requests"
+              element={
+                <RequireCapability capability="users:manage">
+                  <Screen><AccessRequests /></Screen>
                 </RequireCapability>
               }
             />

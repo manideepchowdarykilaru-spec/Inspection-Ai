@@ -12,6 +12,7 @@ import {
   Settings,
   ShieldAlert,
   SlidersHorizontal,
+  UserPlus,
   Users,
   X,
 } from 'lucide-react';
@@ -21,7 +22,9 @@ import { ROLE_LABEL } from '@shared/lib/format';
 import { useAuth } from '@/context/AuthContext';
 import { useDatabase } from '@/hooks/useDatabase';
 import { unreadCount } from '@/services/notificationService';
-import type { Capability } from '@/services/authService';
+import { pendingAccessCount, type Capability } from '@/services/authService';
+import { hydrate } from '@/services/storage';
+import { useEffect } from 'react';
 
 interface NavItem {
   to: string;
@@ -29,7 +32,7 @@ interface NavItem {
   icon: LucideIcon;
   end?: boolean;
   capability?: Capability;
-  badge?: 'notifications';
+  badge?: 'notifications' | 'accessRequests';
 }
 
 const PRIMARY_NAV: NavItem[] = [
@@ -45,6 +48,7 @@ const PRIMARY_NAV: NavItem[] = [
 ];
 
 const ADMIN_NAV: NavItem[] = [
+  { to: '/app/access-requests', label: 'Access Requests', icon: UserPlus, capability: 'users:manage', badge: 'accessRequests' },
   { to: '/app/users', label: 'Users', icon: Users, capability: 'users:manage' },
   { to: '/app/rules', label: 'Compliance Rules', icon: SlidersHorizontal, capability: 'rules:manage' },
   { to: '/app/settings', label: 'Settings', icon: Settings },
@@ -54,6 +58,16 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
   const { user, signOut, can } = useAuth();
   const navigate = useNavigate();
   const unread = useDatabase(() => unreadCount(), []);
+  const pendingAccess = useDatabase(() => pendingAccessCount(), []);
+
+  // Administrators see new access requests without reloading: the working set
+  // is refreshed from the server every minute while they are signed in.
+  const isAdmin = can('users:manage');
+  useEffect(() => {
+    if (!isAdmin) return;
+    const id = window.setInterval(() => void hydrate().catch(() => undefined), 60_000);
+    return () => window.clearInterval(id);
+  }, [isAdmin]);
 
   const renderItem = (item: NavItem) => {
     if (item.capability && !can(item.capability)) return null;
@@ -86,6 +100,11 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             {item.badge === 'notifications' && unread > 0 && (
               <span className="ml-auto rounded-full bg-red-600 px-1.5 py-0.5 text-2xs font-bold text-white">
                 {unread}
+              </span>
+            )}
+            {item.badge === 'accessRequests' && pendingAccess > 0 && (
+              <span className="ml-auto rounded-full bg-amber-400 px-1.5 py-0.5 text-2xs font-bold text-navy-950">
+                {pendingAccess}
               </span>
             )}
           </>

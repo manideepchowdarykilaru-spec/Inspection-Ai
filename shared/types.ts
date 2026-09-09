@@ -7,7 +7,8 @@
 /* ------------------------------------------------------------------ Users */
 
 export type UserRole = 'ADMIN' | 'SUPERVISOR' | 'INSPECTOR';
-export type UserStatus = 'ACTIVE' | 'INACTIVE' | 'SUSPENDED';
+/** PENDING: registered through the access-request form, awaiting administrator approval. */
+export type UserStatus = 'ACTIVE' | 'INACTIVE' | 'SUSPENDED' | 'PENDING' | 'REJECTED';
 
 export interface User {
   id: string;
@@ -23,6 +24,10 @@ export interface User {
   status: UserStatus;
   lastActiveAt: string;
   createdAt: string;
+  /** Set when an access request was approved or rejected. */
+  reviewedBy?: string;
+  reviewedAt?: string;
+  reviewNote?: string;
 }
 
 /* --------------------------------------------------------------- Products */
@@ -450,4 +455,42 @@ export interface PerImageSummary {
   lines: OcrLine[];
   declarationsFound: string[];
   processingMs: number;
+}
+
+/* ----------------------------------------------------------- Auth contract */
+
+export interface LoginRequest {
+  /** Official ID or departmental e-mail. */
+  identifier: string;
+  password: string;
+  remember?: boolean;
+}
+
+export interface LoginResponse {
+  user: User;
+  /** Signed bearer token; sent as Authorization: Bearer … on every API call. */
+  token: string;
+  issuedAt: string;
+  expiresAt: string;
+}
+
+export interface RegisterRequest {
+  name: string;
+  officialId: string;
+  email: string;
+  phone: string;
+  designation?: string;
+  region: string;
+  role: 'INSPECTOR' | 'SUPERVISOR';
+  password: string;
+}
+
+export interface AccessReviewRequest {
+  decision: 'APPROVE' | 'REJECT';
+  /** The administrator may correct the requested role, region or designation while approving. */
+  role?: UserRole;
+  region?: string;
+  designation?: string;
+  /** Required for a rejection; optional remark for an approval. */
+  note?: string;
 }

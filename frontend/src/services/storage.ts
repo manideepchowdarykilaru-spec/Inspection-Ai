@@ -57,7 +57,14 @@ export function isHydrated() {
   return hydrated;
 }
 
+/** Writes still being persisted; a refresh must not overwrite their optimistic state. */
+let inflightWrites = 0;
+
 export async function hydrate(): Promise<void> {
+  // A background refresh that lands between an optimistic update and the
+  // server acknowledging it would briefly show the old state. Skip it; the
+  // next refresh, or the write's own completion, brings the server truth.
+  if (hydrated && inflightWrites > 0) return;
   const payload = await api.bootstrap();
   db = payload;
   hydrated = true;
@@ -86,12 +93,19 @@ export function mutate(updater: (draft: Database) => void, sync?: () => Promise<
   notify();
 
   if (!sync) return;
-  void sync().catch(async (error: unknown) => {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error('[storage] persistence failed:', message);
-    errorListeners.forEach((fn) => fn(message));
-    await hydrate().catch(() => undefined);
-  });
+  inflightWrites += 1;
+  void sync().then(
+    () => {
+      inflightWrites -= 1;
+    },
+    async (error: unknown) => {
+      inflightWrites -= 1;
+      const message = error instanceof Error ? error.message : String(error);
+      console.error('[storage] persistence failed:', message);
+      errorListeners.forEach((fn) => fn(message));
+      await hydrate().catch(() => undefined);
+    },
+  );
 }
 
 /** Restores the seeded demonstration corpus in the database. */
