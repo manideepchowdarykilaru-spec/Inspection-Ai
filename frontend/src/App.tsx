@@ -4,7 +4,6 @@ import { Navigate, Route, Routes } from 'react-router-dom';
 import { AuthProvider } from '@/context/AuthContext';
 import { ToastProvider } from '@/context/ToastContext';
 import { AppLayout } from '@/layouts/AppLayout';
-import Landing from '@/pages/Landing';
 import Login from '@/pages/Login';
 import Register from '@/pages/Register';
 import { RequireCapability } from '@/components/layout/RequireCapability';
@@ -53,7 +52,8 @@ export default function App() {
     <AuthProvider>
       <ToastProvider>
         <Routes>
-          <Route path="/" element={<Landing />} />
+          {/* The link opens straight on the sign-in screen. */}
+          <Route path="/" element={<Login />} />
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
 
@@ -107,7 +107,7 @@ export default function App() {
             <Route path="settings" element={<Screen><Settings /></Screen>} />
           </Route>
 
-          <Route path="*" element={<Navigate to="/" replace />} />
+          <Route path="*" element={<Navigate to="/login" replace />} />
         </Routes>
       </ToastProvider>
     </AuthProvider>

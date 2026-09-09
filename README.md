@@ -77,7 +77,7 @@ Officers are provisioned by the department, not self-registered, and the app fol
 ## 3. The demonstration flow
 
 ```
-Landing → Login → Dashboard → New Inspection → AI scan → OCR extraction →
+Login → Dashboard → New Inspection → AI scan → OCR extraction →
 Declaration detection → Rule validation → Violation highlighting →
 Screening score → Officer review → Generate report → Saved to history
 ```
@@ -125,7 +125,7 @@ frontend/                 React SPA (Vite)
     hooks/                useDatabase, useMediaQuery
     layouts/              AppLayout (chrome, guards, responsive shell)
     lib/utils.ts          cn(), file download; re-exports shared/lib/utils
-    pages/                Landing, Login, Dashboard, NewInspection, AnalysisWorkspace,
+    pages/                Login, Register, AccessRequests, Dashboard, NewInspection, AnalysisWorkspace,
                           InspectionDetail, InspectionHistory, ProductRepository,
                           ProductDetail, Violations, Reports, ReportDetail, Analytics,
                           EvidenceGallery, Notifications, UserManagement,

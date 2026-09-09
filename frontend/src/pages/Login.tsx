@@ -76,7 +76,7 @@ export default function Login() {
       />
 
       <main className="relative mx-auto flex min-h-screen w-full max-w-md flex-col px-6 pb-10 pt-10 sm:pt-14">
-        <Link to="/" className="mx-auto block w-56 sm:w-64" aria-label="LMPC home">
+        <Link to="/login" className="mx-auto block w-56 sm:w-64" aria-label="LMPC sign in">
           <BrandLogo className="h-auto w-full" />
         </Link>
 
