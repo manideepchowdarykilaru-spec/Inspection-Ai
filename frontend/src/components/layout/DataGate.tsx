@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Navigate, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { Database, RefreshCcw, ScanLine, ServerCrash } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { hydrate, onSyncError } from '@/services/storage';
+import { ApiError } from '@/services/api';
+import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/context/ToastContext';
 
 /**
@@ -14,9 +17,11 @@ import { useToast } from '@/context/ToastContext';
  * department with no inspections on record.
  */
 export function DataGate({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [state, setState] = useState<'loading' | 'ready' | 'error' | 'unauthenticated'>('loading');
   const [message, setMessage] = useState('');
   const toast = useToast();
+  const { user } = useAuth();
+  const location = useLocation();
 
   const load = useCallback(async () => {
     setState('loading');
@@ -24,14 +29,19 @@ export function DataGate({ children }: { children: ReactNode }) {
       await hydrate();
       setState('ready');
     } catch (error) {
+      // No or expired session: this is a sign-in problem, not a database one.
+      if (error instanceof ApiError && error.status === 401) {
+        setState('unauthenticated');
+        return;
+      }
       setMessage(error instanceof Error ? error.message : 'The API did not respond.');
       setState('error');
     }
   }, []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (user) void load();
+  }, [load, user]);
 
   // A background write that fails must not pass silently.
   useEffect(() => {
@@ -46,6 +56,9 @@ export function DataGate({ children }: { children: ReactNode }) {
     };
   }, [toast]);
 
+  if (!user || state === 'unauthenticated') {
+    return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  }
   if (state === 'ready') return <>{children}</>;
 
   return (

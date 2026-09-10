@@ -11,6 +11,7 @@ import {
   Loader2,
   RefreshCcw,
   ScanText,
+  ClipboardList,
   Wand2,
 } from 'lucide-react';
 import { usePageChrome } from '@/layouts/AppLayout';
@@ -22,6 +23,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { UploadZone } from '@/components/inspection/UploadZone';
 import type { CapturedImage } from '@/services/inspectionService';
 import { extractText, type TextExtraction as Extraction } from '@/services/api';
+import { DECLARATION_LABELS } from '@shared/data/declarations';
 import { cn } from '@/lib/utils';
 
 /**
@@ -53,6 +55,7 @@ export default function TextExtraction() {
   const result: Extraction | null = results[activeIndex] ?? null;
   const [view, setView] = useState<'original' | 'processed'>('processed');
   const [activeLine, setActiveLine] = useState<number | null>(null);
+  const [activeDecl, setActiveDecl] = useState<string | null>(null);
   const [minConfidence, setMinConfidence] = useState(0);
 
   const image = images[activeIndex] ?? images[0];
@@ -197,6 +200,7 @@ export default function TextExtraction() {
                     onClick={() => {
                       setActiveIndex(i);
                       setActiveLine(null);
+                      setActiveDecl(null);
                     }}
                     className={cn(
                       'flex shrink-0 items-center gap-2 rounded-md border p-1.5 pr-3 text-left transition-colors',
@@ -207,7 +211,8 @@ export default function TextExtraction() {
                     <span className="min-w-0">
                       <span className="block max-w-[10rem] truncate text-xs font-semibold text-slate-800">{img.name}</span>
                       <span className="block text-2xs text-slate-500">
-                        {r.lines.length} lines · {(r.quality.meanConfidence * 100).toFixed(0)}% · {r.quality.level}
+                        {r.declarations.filter((d) => d.detectedValue).length}/12 declarations · {r.lines.length} lines ·{' '}
+                        {r.quality.level}
                       </span>
                     </span>
                   </button>
@@ -323,6 +328,27 @@ export default function TextExtraction() {
                     alt={view === 'processed' ? 'Preprocessed image read by OCR' : 'Original photograph'}
                     className="w-full object-contain"
                   />
+                  {/* The selected declaration, drawn in the brand colour on the original. */}
+                  {view === 'original' &&
+                    result.declarations
+                      .filter((d) => d.box && d.key === activeDecl)
+                      .map((d) => (
+                        <span
+                          key={d.key}
+                          aria-hidden
+                          className="absolute z-20 rounded-[3px] border-2 border-brand-400 bg-brand-400/25 ring-2 ring-white/80"
+                          style={{
+                            left: `${d.box!.x * 100}%`,
+                            top: `${d.box!.y * 100}%`,
+                            width: `${d.box!.w * 100}%`,
+                            height: `${d.box!.h * 100}%`,
+                          }}
+                        >
+                          <span className="absolute -top-5 left-0 whitespace-nowrap rounded bg-brand-400 px-1.5 py-0.5 text-[10px] font-bold text-navy-950">
+                            {d.label}
+                          </span>
+                        </span>
+                      ))}
                   {/* Line boxes are in original-image space; only drawn on the original. */}
                   {view === 'original' &&
                     visibleLines.map((line, i) => (
@@ -384,11 +410,102 @@ export default function TextExtraction() {
               </CardBody>
             </Card>
 
+            <div className="flex min-w-0 flex-col gap-4">
+            {/* Mandatory declarations read from this image */}
+            {(() => {
+              const found = result.declarations.filter((d) => d.detectedValue);
+              const acrossAll = new Set(results.flatMap((r) => r.declarations.filter((d) => d.detectedValue).map((d) => d.key)));
+              return (
+                <Card className="overflow-hidden">
+                  <CardHeader
+                    title="Mandatory declarations"
+                    subtitle={
+                      results.length > 1
+                        ? `${found.length} of 12 on this image · ${acrossAll.size} of 12 across ${results.length} images`
+                        : `${found.length} of 12 located in the text`
+                    }
+                    dense
+                    actions={
+                      <Badge tone={found.length >= 8 ? 'green' : found.length >= 4 ? 'amber' : 'red'}>
+                        {found.length}/12
+                      </Badge>
+                    }
+                  />
+                  <ul className="divide-y divide-slate-100">
+                    {result.declarations.map((d) => {
+                      const pct = Math.round(d.confidence * 100);
+                      const isActive = activeDecl === d.key;
+                      return (
+                        <li key={d.key}>
+                          <button
+                            type="button"
+                            disabled={!d.detectedValue}
+                            onClick={() => {
+                              setView('original');
+                              setActiveLine(null);
+                              setActiveDecl(isActive ? null : d.key);
+                            }}
+                            className={cn(
+                              'flex w-full items-start gap-3 px-4 py-2 text-left transition-colors',
+                              d.detectedValue ? 'hover:bg-slate-50' : 'cursor-default opacity-60',
+                              isActive && 'bg-brand-50',
+                            )}
+                          >
+                            <span className="min-w-0 flex-1">
+                              <span className="label-text block">{d.label}</span>
+                              <span
+                                className={cn(
+                                  'mt-0.5 block break-words text-sm leading-snug',
+                                  d.detectedValue ? 'font-medium text-slate-900' : 'italic text-slate-400',
+                                )}
+                              >
+                                {d.detectedValue ?? (d.notApplicable ? `Not applicable — ${d.notApplicable}` : 'Not found on this image')}
+                              </span>
+                            </span>
+                            {d.detectedValue ? (
+                              <>
+                                <span
+                                  className={cn(
+                                    'mt-0.5 shrink-0 rounded px-1.5 py-0.5 font-mono text-2xs font-semibold',
+                                    pct >= 85
+                                      ? 'bg-emerald-50 text-emerald-800'
+                                      : pct >= 65
+                                        ? 'bg-amber-50 text-amber-800'
+                                        : 'bg-red-50 text-red-800',
+                                  )}
+                                  title="Extraction confidence"
+                                >
+                                  {pct}%
+                                </span>
+                                <Crosshair size={12} className="mt-1 shrink-0 text-slate-400" aria-hidden />
+                              </>
+                            ) : (
+                              <span className={cn('mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-2xs font-semibold', d.notApplicable ? 'bg-emerald-50 text-emerald-800' : 'bg-slate-100 text-slate-500')}>
+                                {d.notApplicable ? 'n/a' : 'missing'}
+                              </span>
+                            )}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                  <div className="flex items-start gap-2 border-t border-slate-200 bg-slate-50 px-4 py-2.5">
+                    <ClipboardList size={13} className="mt-0.5 shrink-0 text-slate-500" />
+                    <p className="text-2xs leading-relaxed text-slate-600">
+                      A missing declaration here means it was not read from this photograph, not that the package
+                      lacks it. Use <span className="font-semibold">Analyse compliance</span> above to run the rule
+                      engine over all images together.
+                    </p>
+                  </div>
+                </Card>
+              );
+            })()}
+
             {/* Extracted lines */}
             <Card className="flex flex-col overflow-hidden xl:max-h-[calc(100vh-15rem)]">
               <CardHeader
                 title="Extracted text"
-                subtitle={`${visibleLines.length} of ${result.lines.length} lines shown`}
+                subtitle={`${visibleLines.length} of ${result.lines.length} lines shown · ${result.lines.filter((l) => l.section).length} tagged with a declaration section`}
                 dense
                 actions={
                   <Button size="sm" variant="outline" icon={<Copy size={13} />} onClick={() => void copyText()}>
@@ -433,8 +550,16 @@ export default function TextExtraction() {
                         )}
                       >
                         <span className="mt-0.5 w-6 shrink-0 text-right font-mono text-2xs text-slate-400">{i + 1}</span>
-                        <span className="min-w-0 flex-1 break-words font-mono text-xs leading-relaxed text-slate-900">
-                          {line.text}
+                        <span className="min-w-0 flex-1">
+                          <span className="block break-words font-mono text-xs leading-relaxed text-slate-900">{line.text}</span>
+                          {line.section && (
+                            <span
+                              className="mt-0.5 inline-block rounded bg-brand-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-brand-800"
+                              title={`Section identified by the text classifier · ${Math.round((line.sectionConfidence ?? 0) * 100)}% confidence`}
+                            >
+                              {DECLARATION_LABELS[line.section]}
+                            </span>
+                          )}
                         </span>
                         <span
                           className={cn(
@@ -473,6 +598,7 @@ export default function TextExtraction() {
                 </pre>
               </div>
             </Card>
+            </div>
           </div>
         </>
       )}

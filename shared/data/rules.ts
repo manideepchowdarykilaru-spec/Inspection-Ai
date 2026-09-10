@@ -269,7 +269,7 @@ export const COMPLIANCE_RULES: ComplianceRule[] = [
   },
   {
     id: 'LMPC-PKG-04',
-    name: 'FSSAI licence number declared',
+    name: 'Statutory licence number declared',
     category: 'Packaging Information',
     legalReference: 'FSS (Licensing & Registration) Regulations, 2011',
     description:

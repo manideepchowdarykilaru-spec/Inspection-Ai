@@ -33,7 +33,7 @@ const FILES = [
 const pad = (s: string | number, n: number) => String(s).padEnd(n);
 
 console.log(
-  `${pad('image', 17)}${pad('fields', 8)}${pad('conf', 6)}${pad('pass', 20)}${pad('crop', 6)}${pad('skew', 7)}${pad('turn', 6)}${pad('inv', 5)}${pad('level', 10)}ms`,
+  `${pad('image', 17)}${pad('fields', 8)}${pad('conf', 6)}${pad('pass', 20)}${pad('crop', 6)}${pad('skew', 7)}${pad('turn', 6)}${pad('inv', 5)}${pad('lbl', 5)}${pad('level', 10)}ms`,
 );
 console.log('-'.repeat(98));
 
@@ -53,7 +53,7 @@ for (const file of FILES) {
     `${pad(file, 17)}${pad(`${found}/12`, 8)}${pad(r.quality.meanConfidence, 6)}${pad(r.quality.passUsed, 20)}` +
       `${pad(r.quality.refocused ? 'yes' : '-', 6)}${pad(r.preprocessing.skewDeg ? `${r.preprocessing.skewDeg}°` : '-', 7)}` +
       `${pad(r.preprocessing.quarterTurns ? `${r.preprocessing.quarterTurns * 90}°` : '-', 6)}` +
-      `${pad(r.preprocessing.inverted ? 'yes' : '-', 5)}${pad(r.quality.level, 10)}${Date.now() - t0}`,
+      `${pad(r.preprocessing.inverted ? 'yes' : '-', 5)}${pad(r.quality.labelDetected ? 'yes' : 'NO', 5)}${pad(r.quality.level, 10)}${Date.now() - t0}`,
   );
   if (process.argv.includes('--verbose')) {
     for (const d of r.declarations) {

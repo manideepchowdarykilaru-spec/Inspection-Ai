@@ -129,6 +129,53 @@ export async function setPasswordHashIfEmpty(officialId: string, hash: string) {
   await pool.query('UPDATE users SET password_hash = $2 WHERE official_id = $1 AND password_hash IS NULL', [officialId, hash]);
 }
 
+/* ------------------------------------------------------------ Scan archive */
+
+export async function archiveScan(row: {
+  name?: string;
+  dataUrl: string;
+  width: number;
+  height: number;
+  found: number;
+  level: string;
+  labelFound: boolean;
+  processingMs: number;
+}) {
+  await pool.query(
+    `INSERT INTO scan_archive (name, data_url, width, height, found, level, label_found, processing_ms)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [row.name ?? null, row.dataUrl, row.width, row.height, row.found, row.level, row.labelFound, row.processingMs],
+  );
+  await pool.query(
+    'DELETE FROM scan_archive WHERE id NOT IN (SELECT id FROM scan_archive ORDER BY scanned_at DESC LIMIT 30)',
+  );
+}
+
+/* -------------------------------------------------------- Password resets */
+
+export async function savePasswordReset(userId: string, codeHash: string, expiresAt: Date) {
+  await pool.query(
+    `INSERT INTO password_resets (user_id, code_hash, expires_at, attempts, created_at)
+     VALUES ($1, $2, $3, 0, now())
+     ON CONFLICT (user_id) DO UPDATE SET code_hash = $2, expires_at = $3, attempts = 0, created_at = now()`,
+    [userId, codeHash, expiresAt],
+  );
+}
+
+export async function getPasswordReset(userId: string): Promise<{ codeHash: string; expiresAt: Date; attempts: number } | null> {
+  const { rows } = await pool.query('SELECT code_hash, expires_at, attempts FROM password_resets WHERE user_id = $1', [userId]);
+  if (!rows[0]) return null;
+  return { codeHash: rows[0].code_hash, expiresAt: new Date(rows[0].expires_at), attempts: rows[0].attempts };
+}
+
+export async function countPasswordResetAttempt(userId: string) {
+  await pool.query('UPDATE password_resets SET attempts = attempts + 1 WHERE user_id = $1', [userId]);
+}
+
+export async function deletePasswordReset(userId: string) {
+  await pool.query('DELETE FROM password_resets WHERE user_id = $1', [userId]);
+}
+
 export async function touchLastActive(id: string) {
   await pool.query('UPDATE users SET last_active_at = now() WHERE id = $1', [id]);
 }

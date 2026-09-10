@@ -514,8 +514,8 @@ const VALIDATORS: Record<string, Validator> = {
   ),
   'LMPC-PKG-04': presence(
     'FSSAI_LICENSE',
-    '14-digit FSSAI licence number',
-    'No FSSAI licence number was detected on the scanned panel.',
+    '14-digit FSSAI licence number for food, or the manufacturing licence number for drugs, cosmetics and ayurvedic products',
+    'No FSSAI or manufacturing licence number was detected on the scanned panel.',
   ),
 };
 

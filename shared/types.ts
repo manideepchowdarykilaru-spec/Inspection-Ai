@@ -127,6 +127,8 @@ export interface Declaration {
   region?: EvidenceRegion;
   /** Readability metrics derived from the OCR bounding box and image DPI. */
   readability?: ReadabilityMetric;
+  /** Set when the declaration is not required for this package (e.g. importer on an Indian-origin pack), with the reason. */
+  notApplicable?: string;
 }
 
 export interface ReadabilityMetric {
@@ -415,6 +417,8 @@ export interface OcrQuality {
   passUsed: string;
   upscaleApplied: number;
   refocused: boolean;
+  /** False when the photograph shows no printed panel at all — nothing to analyse. */
+  labelDetected: boolean;
   level: 'GOOD' | 'MARGINAL' | 'POOR';
   advice?: string;
 }
@@ -445,6 +449,9 @@ export interface OcrLine {
   text: string;
   confidence: number;
   box: { x: number; y: number; w: number; h: number };
+  /** Declaration section the line was classified into by the NLP tagger; absent when OTHER or unsure. */
+  section?: DeclarationKey;
+  sectionConfidence?: number;
 }
 
 export interface PerImageSummary {
@@ -493,4 +500,28 @@ export interface AccessReviewRequest {
   designation?: string;
   /** Required for a rejection; optional remark for an approval. */
   note?: string;
+}
+
+export interface ForgotPasswordRequest {
+  identifier: string;
+}
+
+export interface ForgotPasswordResponse {
+  ok: true;
+  /** Where the code was sent, masked for display. */
+  maskedPhone: string;
+  maskedEmail: string;
+  expiresInMinutes: number;
+  /** Channels that actually carried the code. Empty when no provider is configured. */
+  channels: ('email' | 'sms')[];
+  /** Present only when no channel delivered the code, so the flow can still be completed. */
+  demoCode?: string;
+  /** Why a configured channel did not deliver, if that happened. */
+  deliveryNote?: string;
+}
+
+export interface ResetPasswordRequest {
+  identifier: string;
+  code: string;
+  newPassword: string;
 }

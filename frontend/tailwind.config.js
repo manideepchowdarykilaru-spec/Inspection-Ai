@@ -7,17 +7,19 @@ export default {
   theme: {
     extend: {
       colors: {
+        // LMPC palette: the sidebar and dark surfaces are a warm brown drawn from
+        // the logo; brand and accent are its gold, so what used to be blue is yellow.
         navy: {
-          50: '#F2F6FB', 100: '#E2EAF5', 200: '#C3D3E8', 300: '#94AFD1',
-          400: '#5E82B3', 500: '#3C6098', 600: '#2A4A7C', 700: '#1E3A66',
-          800: '#132B4F', 900: '#0B2545', 950: '#061729',
+          50: '#FBF7EE', 100: '#F5EBD3', 200: '#E9D5A6', 300: '#D9B96F',
+          400: '#B8913B', 500: '#8E6A1C', 600: '#6E4E0F', 700: '#563C0B',
+          800: '#3F2B08', 900: '#2E1F06', 950: '#1C1304',
         },
         brand: {
-          50: '#EFF6FF', 100: '#DBEAFE', 200: '#BFDBFE', 300: '#93C5FD',
-          400: '#60A5FA', 500: '#3B82F6', 600: '#2563EB', 700: '#1D4ED8',
-          800: '#1E40AF', 900: '#1E3A8A',
+          50: '#FFFBEB', 100: '#FEF3C7', 200: '#FDE68A', 300: '#FCD34D',
+          400: '#F6C21B', 500: '#EAB308', 600: '#CA9A04', 700: '#A47B02',
+          800: '#7A5A00', 900: '#5A4200',
         },
-        accent: { 400: '#38BDF8', 500: '#0EA5E9', 600: '#0284C7' },
+        accent: { 400: '#F6C21B', 500: '#EAB308', 600: '#CA9A04' },
       },
       fontFamily: {
         sans: ['Inter', 'Segoe UI', 'system-ui', '-apple-system', 'sans-serif'],

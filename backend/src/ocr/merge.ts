@@ -65,7 +65,8 @@ export function mergeReadings(readings: ImageReading[]): MergedReading {
         .filter((d): d is Declaration => Boolean(d));
       const confidence =
         misses.reduce((s, d) => s + d.confidence, 0) / Math.max(misses.length, 1);
-      return { key, label: DECLARATION_LABELS[key], detectedValue: null, confidence: Number(confidence.toFixed(2)) };
+      const notApplicable = misses.find((d) => d.notApplicable)?.notApplicable;
+      return { key, label: DECLARATION_LABELS[key], detectedValue: null, confidence: Number(confidence.toFixed(2)), ...(notApplicable ? { notApplicable } : {}) };
     }
     return candidates.reduce(betterOf);
   });
@@ -124,6 +125,7 @@ export function mergeReadings(readings: ImageReading[]): MergedReading {
     passUsed: `${readings.length} images merged · best of ${foundPerImage.join('/')}`,
     upscaleApplied: primary.response.quality.upscaleApplied,
     refocused: qualities.some((q) => q.refocused),
+    labelDetected: qualities.some((q) => q.labelDetected),
     level,
     advice,
   };

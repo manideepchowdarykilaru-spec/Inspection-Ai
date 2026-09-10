@@ -139,15 +139,12 @@ export default function Login() {
               />
               Remember me
             </label>
-            <button
-              type="button"
-              onClick={() =>
-                toast.info('Password reset', 'Password resets are handled by the department administrator.')
-              }
+            <Link
+              to="/forgot-password"
               className="text-base font-bold text-slate-900 underline underline-offset-4 hover:text-amber-700"
             >
               Forgot Password?
-            </button>
+            </Link>
           </div>
 
           <button

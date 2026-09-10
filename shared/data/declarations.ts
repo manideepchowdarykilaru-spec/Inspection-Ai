@@ -18,7 +18,7 @@ export const DECLARATION_LABELS: Record<DeclarationKey, string> = {
   COUNTRY_OF_ORIGIN: 'Country of Origin',
   IMPORTER_DETAILS: 'Importer Details',
   BEST_BEFORE: 'Best Before / Use By',
-  FSSAI_LICENSE: 'FSSAI Licence Number',
+  FSSAI_LICENSE: 'Licence Number (FSSAI / Mfg. Lic.)',
   BATCH_NUMBER: 'Batch / Lot Number',
 };
 

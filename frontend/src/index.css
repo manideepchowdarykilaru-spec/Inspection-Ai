@@ -4,7 +4,7 @@
 
 @layer base {
   :root {
-    --ring-brand: 37 99 235;
+    --ring-brand: 202 154 4;
   }
   * {
     @apply border-slate-200;

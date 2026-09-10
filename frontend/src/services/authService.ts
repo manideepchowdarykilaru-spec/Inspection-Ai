@@ -1,4 +1,4 @@
-import type { AccessReviewRequest, RegisterRequest, User, UserRole } from '@shared/types';
+import type { AccessReviewRequest, ForgotPasswordRequest, RegisterRequest, ResetPasswordRequest, User, UserRole } from '@shared/types';
 import { getDb, mutate } from './storage';
 import * as api from './api';
 
@@ -47,6 +47,21 @@ export async function signIn({ officialId, password, remember }: Credentials): P
   sessionStorage.setItem(SESSION_KEY, JSON.stringify(session));
   if (remember) localStorage.setItem(SESSION_KEY, JSON.stringify(session));
   return session;
+}
+
+const asAuthError = (error: unknown): never => {
+  if (error instanceof api.ApiError) throw new AuthError(error.message);
+  throw new AuthError('Cannot reach the server. Check your connection and try again.');
+};
+
+/** Step 1 of a password reset: a one-time code goes to the registered mobile. */
+export function requestPasswordCode(body: ForgotPasswordRequest) {
+  return api.forgotPassword(body).catch(asAuthError);
+}
+
+/** Step 2: the code plus the new password. */
+export function resetPasswordWithCode(body: ResetPasswordRequest) {
+  return api.resetPassword(body).catch(asAuthError);
 }
 
 /** Access request for a new officer; the account stays pending until an administrator approves it. */

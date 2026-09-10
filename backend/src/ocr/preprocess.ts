@@ -98,9 +98,9 @@ export interface PreprocessResult {
 /** Anything larger is downscaled before processing; OCR gains nothing beyond it. */
 const MAX_WORKING_EDGE = 2400;
 /** Long edge presented to the recogniser. */
-const TARGET_LONG_EDGE = 2400;
+const TARGET_LONG_EDGE = Number(process.env.OCR_TARGET_EDGE ?? 2400);
 /** Never enlarge beyond this — interpolation past 3× only adds blur. */
-const MAX_UPSCALE = 3;
+const MAX_UPSCALE = Number(process.env.OCR_MAX_UPSCALE ?? 3);
 const PAD_PX = 24;
 /** Skew search range and step, degrees. */
 const SKEW_RANGE_DEG = 12;
@@ -418,6 +418,31 @@ function invert(img: GreyImage): GreyImage {
 /* ---------------------------------------------------------------- Denoise */
 
 /** 3×3 median — removes sensor speckle and JPEG mosquito noise without eroding strokes. */
+/** 3×3 box blur; two passes join the dots of dot-matrix print into strokes. */
+function boxBlur3x3(img: GreyImage): GreyImage {
+  const { width, height, data } = img;
+  const out = new Uint8Array(data.length);
+  for (let y = 0; y < height; y++) {
+    const y0 = Math.max(0, y - 1);
+    const y1 = Math.min(height - 1, y + 1);
+    for (let x = 0; x < width; x++) {
+      const x0 = Math.max(0, x - 1);
+      const x1 = Math.min(width - 1, x + 1);
+      let sum = 0;
+      let n = 0;
+      for (let yy = y0; yy <= y1; yy++) {
+        const row = yy * width;
+        for (let xx = x0; xx <= x1; xx++) {
+          sum += data[row + xx];
+          n++;
+        }
+      }
+      out[y * width + x] = Math.round(sum / n);
+    }
+  }
+  return { width, height, data: out };
+}
+
 function median3x3(img: GreyImage): GreyImage {
   const { width, height, data } = img;
   const out = new Uint8Array(data.length);
@@ -601,6 +626,9 @@ function estimateSkewDeg(binary: GreyImage): number {
       bestAngle = deg;
     }
   }
+  // A maximum on the edge of the search range is not a measurement — clutter,
+  // a barcode or converging lines pushed the score monotonically; do nothing.
+  if (Math.abs(bestAngle) >= SKEW_RANGE_DEG - SKEW_STEP_DEG / 2) return 0;
   return Math.abs(bestAngle) < SKEW_STEP_DEG ? 0 : bestAngle;
 }
 
@@ -981,7 +1009,33 @@ export interface PreprocessOptions {
   crop?: { x: number; y: number; w: number; h: number };
   /** 90° clockwise turns to apply so the text reads left-to-right. */
   quarterTurns?: 0 | 1 | 2 | 3;
+  /**
+   * Tilt of the text lines measured by the recogniser on the probe pass, in the
+   * same convention as the projection estimator. Preferred over the estimator,
+   * which clutter and barcodes can fool.
+   */
+  skewDegHint?: number | null;
+  /** Median cap height of the print in source pixels, from the probe; drives the upscale. */
+  sourceCapHeightPx?: number | null;
+  /**
+   * Dot-matrix mode for the price, batch and date block: the median filter that
+   * removes sensor speckle also removes the dots of a dot-matrix glyph, so a
+   * light blur that joins the dots into strokes is used instead.
+   */
+  dotMatrix?: boolean;
+  /**
+   * Read the opposite polarity from the one detected. A dark label on a bright
+   * bottle or shelf fools the whole-frame polarity test: the frame reads as
+   * light, so the white print on the label is never inverted.
+   */
+  forceInvert?: boolean;
 }
+
+/** Cap height the recogniser reads comfortably; the upscale aims the print at it. */
+const TARGET_CAP_PX = 28;
+/** Upscale ceiling when the print is known to be small. */
+const MAX_UPSCALE_FOR_SMALL_PRINT = 4;
+const MAX_UPSCALED_EDGE = 4400;
 
 /** Exact 90° clockwise rotation, repeated `turns` times. */
 export function rotate90(img: GreyImage, turns: number): GreyImage {
@@ -1043,14 +1097,24 @@ export async function preprocessForOcr(
     stages.push(`rotate ${quarterTurns * 90}° (text was sideways)`);
   }
 
-  const polarity = detectInverted(grey);
+  const detected = detectInverted(grey);
+  const polarity = { ...detected, inverted: options.forceInvert ? !detected.inverted : detected.inverted };
   if (polarity.inverted) {
     grey = invert(grey);
-    stages.push(`invert (median luminance ${polarity.medianLuminance} — light text on dark)`);
+    stages.push(
+      options.forceInvert
+        ? `invert (forced — light print on a dark label inside a bright frame)`
+        : `invert (median luminance ${polarity.medianLuminance} — light text on dark)`,
+    );
   }
 
-  grey = median3x3(grey);
-  stages.push('median 3×3 denoise');
+  if (options.dotMatrix) {
+    grey = boxBlur3x3(boxBlur3x3(grey));
+    stages.push('dot-matrix closing (2× 3×3 blur, no median)');
+  } else {
+    grey = median3x3(grey);
+    stages.push('median 3×3 denoise');
+  }
 
   grey = flattenLighting(grey);
   grey = stretchContrast(grey);
@@ -1075,23 +1139,38 @@ export async function preprocessForOcr(
     quickBinary = sauvola(grey, sauvolaWindow);
     stages.push(`perspective rectify (keystone ${(rectified.keystone * 100).toFixed(1)}% → ${grey.width}×${grey.height})`);
   }
-  // The estimator reports the tilt of the text lines; levelling them means
-  // rotating by the opposite angle.
-  const skewDeg = -estimateSkewDeg(quickBinary);
+  // The tilt of the text lines; levelling them means rotating by the opposite
+  // angle. The recogniser's own measurement from the probe pass is preferred
+  // over the projection estimator whenever it is available.
+  const hinted = options.skewDegHint != null && Math.abs(options.skewDegHint) <= 20 && Math.abs(options.skewDegHint) >= 0.5;
+  const tilt = hinted ? Math.round(options.skewDegHint! * 2) / 2 : estimateSkewDeg(quickBinary);
+  const skewDeg = -tilt;
   if (skewDeg !== 0) {
     grey = rotate(grey, skewDeg);
-    stages.push(`deskew ${skewDeg > 0 ? '+' : ''}${skewDeg.toFixed(1)}°`);
+    stages.push(`deskew ${skewDeg > 0 ? '+' : ''}${skewDeg.toFixed(1)}°${hinted ? ' (measured on text lines)' : ''}`);
   }
 
   const binarised = skewDeg !== 0 ? sauvola(grey, sauvolaWindow) : quickBinary;
   stages.push(`Sauvola binarise (window ${sauvolaWindow}, k ${SAUVOLA_K})`);
 
-  const scale = Math.min(MAX_UPSCALE, Math.max(1, TARGET_LONG_EDGE / Math.max(grey.width, grey.height)));
+  const longEdge = Math.max(grey.width, grey.height);
+  let scale = Math.min(MAX_UPSCALE, Math.max(1, TARGET_LONG_EDGE / longEdge));
+  // Small print asks for more: aim the measured cap height at what the
+  // recogniser reads well, within a hard ceiling on the output size.
+  const capNow = options.sourceCapHeightPx ? options.sourceCapHeightPx * workScale : null;
+  let capNote = '';
+  if (capNow && capNow > 0 && capNow < TARGET_CAP_PX) {
+    const wanted = Math.min(MAX_UPSCALE_FOR_SMALL_PRINT, TARGET_CAP_PX / capNow, MAX_UPSCALED_EDGE / longEdge);
+    if (wanted > scale) {
+      scale = wanted;
+      capNote = ` (print ≈${capNow.toFixed(0)} px → ${(capNow * scale).toFixed(0)} px)`;
+    }
+  }
   const greyUp = scale > 1.001 ? sharpen(upscale(grey, scale)) : grey;
   // The binary variant is upscaled as-is: re-running Sauvola at 2400 px costs
   // ~0.5 s and the recogniser gains nothing from softened binary edges.
   const binaryUp = scale > 1.001 ? upscaleNearest(binarised, scale) : binarised;
-  if (scale > 1.001) stages.push(`upscale ×${scale.toFixed(2)} + unsharp mask`);
+  if (scale > 1.001) stages.push(`upscale ×${scale.toFixed(2)} + unsharp mask${capNote}`);
 
   const geometry: VariantGeometry = {
     scale,

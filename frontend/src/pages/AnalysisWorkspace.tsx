@@ -100,7 +100,7 @@ export default function AnalysisWorkspace() {
           <span className="inline-flex items-center gap-1.5 font-semibold text-slate-700">
             <Cpu size={12} /> Pipeline: preprocess → OCR → detection → classification → rules → score
           </span>
-          <span className="hidden sm:inline">Engine: PaddleOCR v4 (mock) · Rule engine v1.3</span>
+          <span className="hidden sm:inline">Engine: Tesseract LSTM · Rule engine v1.3</span>
           <span className="ml-auto inline-flex items-center gap-1.5">
             <Gauge size={12} />
             {result ? 'Screening complete' : 'Screening in progress'}
@@ -382,7 +382,35 @@ export default function AnalysisWorkspace() {
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,420px)]">
         <ScanProgress completed={completed} current={current} />
 
-        {result ? (
+        {result && result.quality && result.quality.labelDetected === false ? (
+          <div className="surface border-l-4 border-l-red-600 bg-red-50/50 p-5">
+            <div className="flex items-start gap-3">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-red-100 text-red-700">
+                <CameraOff size={18} />
+              </span>
+              <div className="min-w-0">
+                <h2 className="text-sm font-bold text-slate-900">No packaged-commodity label detected</h2>
+                <p className="mt-1 text-xs leading-relaxed text-slate-700">{result.quality.advice}</p>
+                <p className="mt-2 font-mono text-2xs text-slate-500">
+                  {result.quality.wordsRead} fragments read · confidence {(result.quality.meanConfidence * 100).toFixed(0)}% · no
+                  declaration located
+                </p>
+                <p className="mt-2 text-2xs leading-relaxed text-slate-500">
+                  Nothing here can be scored, so no inspection record is created from this photograph. Re-capture with
+                  the printed panel filling the frame, then scan again.
+                </p>
+                <Button
+                  size="sm"
+                  className="mt-3"
+                  icon={<RefreshCcw size={13} />}
+                  onClick={() => navigate('/app/new-inspection', { state: { prefillImages: images } })}
+                >
+                  Capture again
+                </Button>
+              </div>
+            </div>
+          </div>
+        ) : result ? (
           <div className="space-y-4">
             {result.quality && result.quality.level !== 'GOOD' && (
               <div

@@ -23,7 +23,9 @@ export function DeclarationPanel({
 }) {
   const [showRaw, setShowRaw] = useState(false);
   const detected = declarations.filter((d) => d.detectedValue);
-  const missing = declarations.filter((d) => !d.detectedValue);
+  const notApplicable = declarations.filter((d) => !d.detectedValue && d.notApplicable);
+  const missing = declarations.filter((d) => !d.detectedValue && !d.notApplicable);
+  const applicable = declarations.length - notApplicable.length;
 
   return (
     <div className={cn('surface flex flex-col overflow-hidden', className)}>
@@ -33,7 +35,7 @@ export function DeclarationPanel({
           <h2 className="text-sm font-bold tracking-tight text-slate-900">Detected Declarations</h2>
         </div>
         <span className="rounded-full bg-slate-100 px-2 py-0.5 text-2xs font-semibold text-slate-600">
-          {detected.length} / {declarations.length}
+          {detected.length} / {applicable}{notApplicable.length > 0 ? ' applicable' : ''}
         </span>
       </div>
 
@@ -80,6 +82,18 @@ export function DeclarationPanel({
             </button>
           );
         })}
+
+        {notApplicable.length > 0 && (
+          <div className="border-b border-slate-100 bg-emerald-50/40 px-4 py-3">
+            <p className="label-text mb-2">Not applicable to this package</p>
+            {notApplicable.map((d) => (
+              <p key={d.key} className="text-xs text-slate-700">
+                <span className="font-semibold">{d.label}</span>
+                <span className="text-slate-500"> — {d.notApplicable}</span>
+              </p>
+            ))}
+          </div>
+        )}
 
         {missing.length > 0 && (
           <div className="bg-slate-50/70 px-4 py-3">

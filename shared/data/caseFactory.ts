@@ -42,7 +42,7 @@ const LABEL_FIELD: Record<DeclarationKey, keyof LabelSpec> = {
 };
 
 const OCR_META = {
-  engine: 'PaddleOCR v4 (PP-OCRv4) · en+hi',
+  engine: 'Demonstration corpus · vector label (no OCR)',
   imageWidth: 800,
   imageHeight: 1040,
   estimatedDpi: 254,

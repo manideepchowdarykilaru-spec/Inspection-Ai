@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { LmpcMark } from '@/components/ui/BrandLogo';
 import { ROLE_LABEL } from '@shared/lib/format';
 import { useAuth } from '@/context/AuthContext';
 import { useDatabase } from '@/hooks/useDatabase';
@@ -132,12 +133,12 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         aria-label="Primary navigation"
       >
         <div className="gov-stripe flex items-center gap-2.5 border-b border-white/10 px-4 py-3.5">
-          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-white/10 ring-1 ring-white/15">
-            <ScanLine size={18} className="text-accent-400" />
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-white ring-1 ring-white/20">
+            <LmpcMark showText={false} className="h-8 w-8" />
           </span>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-extrabold tracking-tight text-white">LM-Inspect AI</p>
-            <p className="truncate text-2xs text-navy-300">Legal Metrology Compliance</p>
+            <p className="truncate text-sm font-extrabold tracking-tight text-accent-400">LMPC</p>
+            <p className="truncate text-2xs text-navy-200">Legal Metrology Packaged Commodities</p>
           </div>
           <button
             type="button"

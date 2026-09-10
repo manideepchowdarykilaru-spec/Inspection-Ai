@@ -20,3 +20,26 @@ services:
         sync: false          # paste the connection string in the dashboard
       - key: AUTH_SECRET
         generateValue: true  # Render generates a random signing secret
+      # Optional: one-time-code delivery. Set in the dashboard; unset = codes shown on screen.
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: 587
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_FROM
+        sync: false
+      - key: OCR_PROVIDER
+        sync: false
+      - key: GOOGLE_VISION_API_KEY
+        sync: false
+      - key: OCRSPACE_API_KEY
+        sync: false

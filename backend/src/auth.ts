@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, randomInt, scryptSync, timingSafeEqual } from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
 import type { UserRole } from '@shared/types';
 
@@ -29,6 +29,11 @@ export function verifyPassword(password: string, stored: string | null | undefin
   const candidate = scryptSync(password, salt, 64);
   const expected = Buffer.from(hash, 'hex');
   return candidate.length === expected.length && timingSafeEqual(candidate, expected);
+}
+
+/** Six-digit one-time code, hashed like a password for storage. */
+export function generateOtp(): string {
+  return String(randomInt(0, 1_000_000)).padStart(6, '0');
 }
 
 export interface TokenPayload {

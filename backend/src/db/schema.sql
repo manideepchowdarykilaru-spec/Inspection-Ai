@@ -161,6 +161,31 @@ CREATE TABLE IF NOT EXISTS audit_log (
   detail        TEXT
 );
 
+-- One-time codes for password resets. A row lives ten minutes and is removed
+-- when used; five wrong attempts void it.
+CREATE TABLE IF NOT EXISTS password_resets (
+  user_id    TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  code_hash  TEXT NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL,
+  attempts   INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Recent scan inputs kept for diagnosis (last 30). Lets a poor result be
+-- reproduced on the exact photograph even when the officer did not save.
+CREATE TABLE IF NOT EXISTS scan_archive (
+  id            BIGSERIAL PRIMARY KEY,
+  scanned_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  name          TEXT,
+  data_url      TEXT NOT NULL,
+  width         INTEGER,
+  height        INTEGER,
+  found         INTEGER,
+  level         TEXT,
+  label_found   BOOLEAN,
+  processing_ms INTEGER
+);
+
 CREATE TABLE IF NOT EXISTS notifications (
   id         TEXT PRIMARY KEY,
   title      TEXT NOT NULL,

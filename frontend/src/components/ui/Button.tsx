@@ -8,9 +8,9 @@ type Size = 'sm' | 'md' | 'lg' | 'icon';
 
 const VARIANTS: Record<Variant, string> = {
   primary:
-    'bg-navy-900 text-white hover:bg-navy-800 active:bg-navy-950 border border-navy-900 shadow-sm',
+    'bg-brand-400 text-slate-900 hover:bg-brand-500 active:bg-brand-600 border border-brand-500 shadow-sm font-semibold',
   secondary:
-    'bg-brand-700 text-white hover:bg-brand-800 active:bg-brand-900 border border-brand-700 shadow-sm',
+    'bg-navy-900 text-white hover:bg-navy-800 active:bg-navy-950 border border-navy-900 shadow-sm',
   outline:
     'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50 hover:border-slate-400 active:bg-slate-100',
   ghost: 'bg-transparent text-slate-600 hover:bg-slate-100 hover:text-slate-900 border border-transparent',

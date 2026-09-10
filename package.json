@@ -16,7 +16,11 @@
     "build": "tsc --noEmit -p frontend/tsconfig.json && vite build --config frontend/vite.config.ts",
     "preview": "vite preview --config frontend/vite.config.ts",
     "ocr:smoke": "node backend/scripts/make-test-label.mjs && tsx --tsconfig backend/tsconfig.json backend/scripts/ocr-smoke-test.ts",
-    "ocr:bench": "node backend/scripts/make-test-label.mjs && node backend/scripts/make-photo-sim.mjs && node backend/scripts/make-webcam-sim.mjs && node backend/scripts/make-test-variants.mjs && tsx --tsconfig backend/tsconfig.json backend/scripts/ocr-bench.ts"
+    "ocr:bench": "node backend/scripts/make-test-label.mjs && node backend/scripts/make-photo-sim.mjs && node backend/scripts/make-webcam-sim.mjs && node backend/scripts/make-test-variants.mjs && tsx --tsconfig backend/tsconfig.json backend/scripts/ocr-bench.ts",
+    "nlp:train": "tsx --tsconfig backend/tsconfig.json backend/scripts/train-line-classifier.ts",
+    "extract:test": "tsx --tsconfig backend/tsconfig.json backend/scripts/extract-fixtures.ts",
+    "dataset:template": "tsx --tsconfig backend/tsconfig.json backend/scripts/dataset-eval.ts --template",
+    "dataset:eval": "tsx --tsconfig backend/tsconfig.json backend/scripts/dataset-eval.ts"
   },
   "dependencies": {
     "@types/compression": "^1.8.1",
@@ -35,6 +39,7 @@
     "express": "^5.2.1",
     "jimp": "^1.6.1",
     "lucide-react": "^0.451.0",
+    "nodemailer": "^10.0.1",
     "pg": "^8.23.0",
     "postcss": "^8.4.47",
     "react": "^18.3.1",
@@ -50,6 +55,7 @@
     "vite": "^5.4.8"
   },
   "devDependencies": {
+    "@types/nodemailer": "^8.0.1",
     "@vitejs/plugin-basic-ssl": "^1.2.0",
     "concurrently": "^10.0.5"
   },

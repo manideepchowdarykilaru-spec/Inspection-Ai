@@ -27,7 +27,7 @@ export async function isSeeded(): Promise<boolean> {
 export async function truncate() {
   await pool.query(
     `TRUNCATE audit_log, violations, evidence, reports, inspections, products,
-              notifications, compliance_rules, users, counters RESTART IDENTITY CASCADE`,
+              notifications, compliance_rules, password_resets, users, counters RESTART IDENTITY CASCADE`,
   );
 }
 

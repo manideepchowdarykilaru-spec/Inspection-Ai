@@ -6,7 +6,9 @@ import { randomUUID } from 'node:crypto';
 import { DEMO_CREDENTIALS, DEPARTMENT } from '@shared/data/mockData';
 import type { AccessReviewRequest, LoginRequest, LoginResponse, RegisterRequest, User } from '@shared/types';
 import type { AuthedRequest } from './auth';
-import { hashPassword, requireAuth, requireRole, signToken, verifyPassword } from './auth';
+import { generateOtp, hashPassword, requireAuth, requireRole, signToken, verifyPassword } from './auth';
+import { deliverOtp, emailConfigured, smsConfigured } from './delivery';
+import type { ForgotPasswordRequest, ForgotPasswordResponse, ResetPasswordRequest } from '@shared/types';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -242,6 +244,108 @@ app.post('/api/auth/register', asyncRoute(async (req, res) => {
   res.status(201).json({ ok: true, status: 'PENDING' });
 }));
 
+/* ---------------------------------------------------------- Password reset */
+
+const OTP_MINUTES = 10;
+const OTP_MAX_ATTEMPTS = 5;
+/** With no provider configured the code is returned to the screen; OTP_SHOW_ON_SCREEN=false forbids that. */
+const OTP_SCREEN_FALLBACK = process.env.OTP_SHOW_ON_SCREEN !== 'false';
+
+const maskPhone = (phone: string) => {
+  const digits = phone.replace(/\D/g, '');
+  return digits.length >= 4 ? `+91 ••••• •${digits.slice(-3)}` : '••••••••••';
+};
+const maskEmail = (email: string) => {
+  const [name, domain] = email.split('@');
+  if (!domain) return '••••@••••';
+  return `${name.slice(0, 2)}•••@${domain}`;
+};
+
+/**
+ * Step 1: the officer identifies the account; a one-time code is issued to
+ * the registered mobile. Only active accounts can reset — a pending or
+ * rejected applicant is told where they stand instead.
+ */
+app.post('/api/auth/forgot', asyncRoute(async (req, res) => {
+  const { identifier } = (req.body ?? {}) as Partial<ForgotPasswordRequest>;
+  if (!identifier) {
+    res.status(400).json({ error: 'Enter your Official ID or e-mail.' });
+    return;
+  }
+  const user = await repo.findUserForLogin(String(identifier));
+  if (!user) {
+    res.status(404).json({ error: 'No account matches that Official ID or e-mail.' });
+    return;
+  }
+  if (user.status === 'PENDING') {
+    res.status(403).json({ error: 'This access request is still awaiting approval; there is no password to reset yet.' });
+    return;
+  }
+  if (user.status !== 'ACTIVE') {
+    res.status(403).json({ error: 'This account is not active. Contact the department administrator.' });
+    return;
+  }
+  const code = generateOtp();
+  const expiresAt = new Date(Date.now() + OTP_MINUTES * 60_000);
+  await repo.savePasswordReset(user.id, hashPassword(code), expiresAt);
+
+  const delivery = await deliverOtp({ name: user.name, email: user.email, phone: user.phone, code, minutes: OTP_MINUTES });
+  for (const f of delivery.failed) console.warn(`[auth] OTP ${f.channel} delivery failed for ${user.officialId}: ${f.reason}`);
+  const configured = emailConfigured() || smsConfigured();
+  const showOnScreen = delivery.delivered.length === 0 && OTP_SCREEN_FALLBACK;
+  if (showOnScreen) console.log(`[auth] password reset code for ${user.officialId}: ${code} (valid ${OTP_MINUTES} min)`);
+  if (delivery.delivered.length === 0 && !OTP_SCREEN_FALLBACK) {
+    res.status(502).json({ error: 'The code could not be sent. Contact the department administrator.' });
+    return;
+  }
+
+  const response: ForgotPasswordResponse = {
+    ok: true,
+    maskedPhone: maskPhone(user.phone),
+    maskedEmail: maskEmail(user.email),
+    expiresInMinutes: OTP_MINUTES,
+    channels: delivery.delivered,
+    ...(showOnScreen ? { demoCode: code } : {}),
+    ...(delivery.failed.length && configured
+      ? { deliveryNote: `${delivery.failed.map((f) => f.channel === 'sms' ? 'SMS' : 'e-mail').join(' and ')} delivery failed; check the provider settings.` }
+      : {}),
+  };
+  res.json(response);
+}));
+
+/** Step 2: the code and the new password. */
+app.post('/api/auth/reset', asyncRoute(async (req, res) => {
+  const { identifier, code, newPassword } = (req.body ?? {}) as Partial<ResetPasswordRequest>;
+  if (!identifier || !code || !newPassword) {
+    res.status(400).json({ error: 'Official ID, the code and a new password are required.' });
+    return;
+  }
+  if (String(newPassword).length < 8) {
+    res.status(400).json({ error: 'The new password must be at least 8 characters.' });
+    return;
+  }
+  const user = await repo.findUserForLogin(String(identifier));
+  const reset = user ? await repo.getPasswordReset(user.id) : null;
+  if (!user || !reset) {
+    res.status(400).json({ error: 'No reset is in progress for this account. Request a new code.' });
+    return;
+  }
+  if (reset.expiresAt.getTime() < Date.now() || reset.attempts >= OTP_MAX_ATTEMPTS) {
+    await repo.deletePasswordReset(user.id);
+    res.status(400).json({ error: 'The code has expired. Request a new one.' });
+    return;
+  }
+  if (!verifyPassword(String(code).trim(), reset.codeHash)) {
+    await repo.countPasswordResetAttempt(user.id);
+    const left = OTP_MAX_ATTEMPTS - reset.attempts - 1;
+    res.status(400).json({ error: left > 0 ? `Incorrect code. ${left} attempt${left === 1 ? '' : 's'} left.` : 'Incorrect code. Request a new one.' });
+    return;
+  }
+  await repo.setPasswordHash(user.id, hashPassword(String(newPassword)));
+  await repo.deletePasswordReset(user.id);
+  res.json({ ok: true });
+}));
+
 /** Seeded demonstration accounts receive their published passwords once. */
 async function ensureDemoPasswords() {
   for (const credential of DEMO_CREDENTIALS) {
@@ -307,6 +411,19 @@ app.post('/api/scan', asyncRoute(async (req, res) => {
         minHeightMm,
       });
       readings.push({ imageId: image.imageId, name: image.name ?? `Image ${index + 1}`, response });
+      // Kept (last 30) so a poor result can be reproduced on the exact photograph.
+      repo
+        .archiveScan({
+          name: image.name,
+          dataUrl: image.dataUrl,
+          width: response.ocr.imageWidth,
+          height: response.ocr.imageHeight,
+          found: response.declarations.filter((d) => d.detectedValue).length,
+          level: response.quality.level,
+          labelFound: response.quality.labelDetected,
+          processingMs: response.ocr.processingMs,
+        })
+        .catch((err: Error) => console.warn('[api] scan archive failed:', err.message));
     }
     const merged = mergeReadings(readings);
     ocr = merged.ocr;
@@ -380,7 +497,20 @@ app.post('/api/ocr/text', asyncRoute(async (req, res) => {
     res.status(400).json({ error: 'Image payload is empty.' });
     return;
   }
-  res.json(await extractText(buffer));
+  const extraction = await extractText(buffer);
+  repo
+    .archiveScan({
+      name: 'text-extraction',
+      dataUrl,
+      width: extraction.imageWidth,
+      height: extraction.imageHeight,
+      found: extraction.declarations.filter((d) => d.detectedValue).length,
+      level: extraction.quality.level,
+      labelFound: extraction.quality.labelDetected,
+      processingMs: extraction.processingMs,
+    })
+    .catch((err: Error) => console.warn('[api] scan archive failed:', err.message));
+  res.json(extraction);
 }));
 
 /* ----------------------------------------------------------- Inspections */
@@ -626,6 +756,10 @@ async function start() {
   }
 
   await ensureDemoPasswords();
+  console.log(
+    `[auth] OTP delivery: e-mail ${emailConfigured() ? 'on (SMTP)' : 'off'} · SMS ${smsConfigured() ? 'on (Twilio)' : 'off'}` +
+      (emailConfigured() || smsConfigured() ? '' : ' · codes shown on screen (demo)'),
+  );
 
   // Warm the cache so the first visitor is not the one who pays for the queries.
   getBootstrap().catch((err) => console.warn('[api] bootstrap warm-up failed:', err.message));

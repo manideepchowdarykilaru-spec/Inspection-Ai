@@ -14,7 +14,10 @@ import type {
   Violation,
   AuditLogEntry,
   AccessReviewRequest,
+  ForgotPasswordRequest,
+  ForgotPasswordResponse,
   LoginRequest,
+  ResetPasswordRequest,
   LoginResponse,
   RegisterRequest,
   ScanImageInput,
@@ -91,6 +94,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const login = (body: LoginRequest) =>
   request<LoginResponse>('/api/auth/login', { method: 'POST', body: JSON.stringify(body) });
 
+export const forgotPassword = (body: ForgotPasswordRequest) =>
+  request<ForgotPasswordResponse>('/api/auth/forgot', { method: 'POST', body: JSON.stringify(body) });
+
+export const resetPassword = (body: ResetPasswordRequest) =>
+  request<{ ok: true }>('/api/auth/reset', { method: 'POST', body: JSON.stringify(body) });
+
 export const registerOfficer = (body: RegisterRequest) =>
   request<{ ok: boolean; status: 'PENDING' }>('/api/auth/register', { method: 'POST', body: JSON.stringify(body) });
 
@@ -128,9 +137,23 @@ export interface ScanRequest {
   panelWidthMm?: number;
 }
 
+/** One of the twelve mandatory declarations as read from a single image. */
+export interface TextDeclaration {
+  key: import('@shared/types').DeclarationKey;
+  label: string;
+  detectedValue: string | null;
+  /** 0..1; 0 when not found. */
+  confidence: number;
+  /** Where on the original image it was read, normalised; null when not found. */
+  box: { x: number; y: number; w: number; h: number } | null;
+  /** Present when the declaration is not required for this package, with the reason. */
+  notApplicable?: string;
+}
+
 export interface TextExtraction {
   rawText: string;
   lines: OcrLine[];
+  declarations: TextDeclaration[];
   quality: OcrQuality;
   preprocessing: PreprocessingSummary;
   processingMs: number;

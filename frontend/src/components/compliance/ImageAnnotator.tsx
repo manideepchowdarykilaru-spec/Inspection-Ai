@@ -69,6 +69,41 @@ export function ImageAnnotator({
   const dragStart = useRef({ x: 0, y: 0, ox: 0, oy: 0 });
   const [fullscreen, setFullscreen] = useState(false);
 
+  // Where the photograph actually sits inside the viewport. The image is
+  // letter-boxed (object-contain), so a wide banner fills a band across the
+  // middle and a tall pouch a column down the centre; region boxes are
+  // fractions of the photograph and must be placed inside that band, never
+  // stretched over the dark surround.
+  const viewportRef = useRef<HTMLDivElement | null>(null);
+  const imageRef = useRef<HTMLImageElement | null>(null);
+  const [frame, setFrame] = useState({ x: 0, y: 0, w: 1, h: 1 });
+
+  const measure = useCallback(() => {
+    const box = viewportRef.current?.getBoundingClientRect();
+    const img = imageRef.current;
+    if (!box || !img || !img.naturalWidth || !img.naturalHeight || !box.width || !box.height) return;
+    const scale = Math.min(box.width / img.naturalWidth, box.height / img.naturalHeight);
+    const w = (img.naturalWidth * scale) / box.width;
+    const h = (img.naturalHeight * scale) / box.height;
+    setFrame({ x: (1 - w) / 2, y: (1 - h) / 2, w, h });
+  }, []);
+
+  useEffect(() => {
+    measure();
+    const el = viewportRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => measure());
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [measure, src, fullscreen]);
+
+  const place = (box: Annotation['box']) => ({
+    left: `${(frame.x + box.x * frame.w) * 100}%`,
+    top: `${(frame.y + box.y * frame.h) * 100}%`,
+    width: `${box.w * frame.w * 100}%`,
+    height: `${box.h * frame.h * 100}%`,
+  });
+
   const reset = useCallback(() => {
     setZoom(1);
     setOffset({ x: 0, y: 0 });
@@ -80,14 +115,14 @@ export function ImageAnnotator({
     const annotation = annotations.find((a) => a.id === activeId);
     if (!annotation) return;
     const nextZoom = 1.85;
-    const cx = annotation.box.x + annotation.box.w / 2;
-    const cy = annotation.box.y + annotation.box.h / 2;
+    const cx = frame.x + (annotation.box.x + annotation.box.w / 2) * frame.w;
+    const cy = frame.y + (annotation.box.y + annotation.box.h / 2) * frame.h;
     setZoom(nextZoom);
     setOffset({
       x: (0.5 - cx) * 100 * nextZoom,
       y: (0.5 - cy) * 100 * nextZoom,
     });
-  }, [activeId, annotations]);
+  }, [activeId, annotations, frame]);
 
   useEffect(() => {
     if (!fullscreen) return;
@@ -115,6 +150,7 @@ export function ImageAnnotator({
 
   const viewer = (
     <div
+      ref={viewportRef}
       className={cn(
         'relative overflow-hidden rounded-md border border-slate-300 bg-slate-900',
         fullscreen ? 'h-full w-full' : 'aspect-[4/5] w-full',
@@ -129,10 +165,12 @@ export function ImageAnnotator({
         onPointerCancel={() => setDragging(false)}
       >
         <img
+          ref={imageRef}
           src={src}
           alt="Scanned package label with AI detection overlay"
           className="h-full w-full select-none object-contain"
           draggable={false}
+          onLoad={measure}
         />
         {annotations.map((a) => {
           const tone = TONE_CLASS[a.tone];
@@ -153,12 +191,7 @@ export function ImageAnnotator({
                 isActive ? 'z-20 ring-2 ring-white/80 ring-offset-1 ring-offset-slate-900' : 'z-10 hover:brightness-125',
                 !isActive && activeId ? 'opacity-45' : 'opacity-100',
               )}
-              style={{
-                left: `${a.box.x * 100}%`,
-                top: `${a.box.y * 100}%`,
-                width: `${a.box.w * 100}%`,
-                height: `${a.box.h * 100}%`,
-              }}
+              style={place(a.box)}
             >
               {/* Labels are shown for findings and for the selected region only —
                   a chip on every valid declaration makes the overlay unreadable. */}

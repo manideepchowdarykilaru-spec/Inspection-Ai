@@ -6,6 +6,7 @@ import { ToastProvider } from '@/context/ToastContext';
 import { AppLayout } from '@/layouts/AppLayout';
 import Login from '@/pages/Login';
 import Register from '@/pages/Register';
+import ForgotPassword from '@/pages/ForgotPassword';
 import { RequireCapability } from '@/components/layout/RequireCapability';
 import { DataGate } from '@/components/layout/DataGate';
 
@@ -56,6 +57,7 @@ export default function App() {
           <Route path="/" element={<Login />} />
           <Route path="/login" element={<Login />} />
           <Route path="/register" element={<Register />} />
+          <Route path="/forgot-password" element={<ForgotPassword />} />
 
           {/* Only the workspace needs the inspection records; the public screens do not wait for them. */}
           <Route

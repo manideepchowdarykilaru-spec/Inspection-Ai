@@ -3,9 +3,9 @@ import { cn } from '@/lib/utils';
 
 /** Palette shared by every chart so the analytics surface reads as one system. */
 export const CHART_COLORS = {
-  navy: '#0B2545',
-  brand: '#2563EB',
-  accent: '#0EA5E9',
+  navy: '#3F2B08',
+  brand: '#EAB308',
+  accent: '#F6C21B',
   green: '#059669',
   amber: '#D97706',
   red: '#B91C1C',
